@@ -1,0 +1,2110 @@
+
+========== ./.github/workflows/ci.yml ==========
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Lint
+        run: ruff check .
+      - name: Format check
+        run: ruff format --check .
+      - name: Type check
+        run: mypy app
+      - name: Test
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///:memory:
+          SECRET_KEY: ci-secret-key-with-enough-length
+          OPENAI_API_KEY: ""
+        run: pytest
+
+========== ./.pre-commit-config.yaml ==========
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.0
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+  - repo: https://github.com/psf/black
+    rev: 24.4.2
+    hooks:
+      - id: black
+
+========== ./alembic.ini ==========
+# Alembic Configuration
+
+[alembic]
+# path to migration scripts
+script_location = migrations
+
+# template used to generate migration file names; The default value is %%(rev)s_%%(slug)s
+# Uncomment the line below if you want the files to be prepended with date and time
+#file_template = %%(rev)s_%%(slug)s
+
+# sys.path path, will be prepended to sys.path if present
+# defaults to the current directory
+prepend_sys_path = .
+
+# timezone to use when rendering the date
+# within the migration file as well as the filename.
+# string value is passed to the constructor of datetime.datetime
+# Leave blank for localtime
+# timezone =
+
+# max length of characters to apply to the
+# "slug" field that's appended to a filename
+# generated date and time (see "file_template")
+# The default value is 40
+# truncate_slug_length = 40
+
+# set to 'true' to run the environment during
+# the 'revision' command, regardless of autogenerate
+# revision_environment = false
+
+# set to 'true' to allow .pyc and .pyo files without
+# a source .py file to be detected as revisions in the
+# versions/ directory
+# sourceless = false
+
+# logging configuration
+# when set to 'false', logging is disabled in the
+# 'env.py' file.  Set to 'true' to enable logging
+# unless from_ini_settings is false. When managing
+# multiple databases, you can define individual
+# sqlalchemy.url configurations per-section for each
+# database.  Put the slave databases on default settings
+# to log with "sqlalchemy.url" key
+# sqlalchemy.url = driver://user:password@localhost/dbname
+
+[loggers]
+keys = root,sqlalchemy,alembic
+
+[handlers]
+keys = console
+
+[formatters]
+keys = generic
+
+[logger_root]
+level = WARN
+handlers = console
+qualname =
+
+[logger_sqlalchemy]
+level = WARN
+handlers =
+qualname = sqlalchemy.engine
+
+[logger_alembic]
+level = INFO
+handlers =
+qualname = alembic
+
+[handler_console]
+class = StreamHandler
+args = (sys.stderr,)
+level = NOTSET
+formatter = generic
+
+[formatter_generic]
+format = %(levelname)-5.5s [%(name)s] %(message)s
+datefmt = %H:%M:%S
+
+========== ./app/__init__.py ==========
+# App initialization
+__version__ = "0.1.0"
+__author__ = "LogisParse Team"
+
+========== ./app/api/__init__.py ==========
+
+========== ./app/api/deps.py ==========
+import logging
+
+from fastapi import Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.core.exceptions import InvalidCredentialsException, UserInactiveException
+from app.core.security import decode_token
+from app.crud.crud_user import get_user_by_id
+from app.models.user import User
+
+logger = logging.getLogger(__name__)
+security = HTTPBearer(auto_error=True)
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    payload = decode_token(credentials.credentials)
+    if payload is None:
+        raise InvalidCredentialsException()
+
+    user_id = payload.get("sub")
+    if not isinstance(user_id, str):
+        raise InvalidCredentialsException()
+
+    user = await get_user_by_id(db, user_id)
+    if user is None:
+        logger.info("Token references missing user_id=%s", user_id)
+        raise InvalidCredentialsException()
+
+    if not user.is_active:
+        raise UserInactiveException()
+
+    return user
+
+========== ./app/api/v1/__init__.py ==========
+
+========== ./app/api/v1/auth.py ==========
+from datetime import timedelta
+
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.core.database import get_db
+from app.core.exceptions import EmailAlreadyRegistered, InvalidCredentialsException, UserInactiveException
+from app.core.security import create_access_token
+from app.crud.crud_user import authenticate_user, create_user, get_user_by_email
+from app.schemas.token import TokenResponse
+from app.schemas.user import UserCreate, UserLogin, UserResponse
+
+router = APIRouter()
+
+
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)) -> UserResponse:
+    existing_user = await get_user_by_email(db, user_data.email)
+    if existing_user is not None:
+        raise EmailAlreadyRegistered()
+
+    user = await create_user(
+        db,
+        email=user_data.email,
+        password=user_data.password,
+        full_name=user_data.full_name,
+    )
+    return UserResponse.model_validate(user)
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(credentials: UserLogin, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+    user = await authenticate_user(db, credentials.email, credentials.password)
+    if user is None:
+        raise InvalidCredentialsException()
+
+    if not user.is_active:
+        raise UserInactiveException()
+
+    access_token = create_access_token(
+        data={"sub": user.id},
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    return TokenResponse(access_token=access_token)
+
+========== ./app/api/v1/documents.py ==========
+import logging
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_current_user
+from app.core.config import settings
+from app.core.database import get_db
+from app.core.exceptions import DocumentNotFound
+from app.crud.crud_document import (
+    create_document,
+    get_document_by_id,
+    get_user_documents,
+    update_document_status,
+)
+from app.models.document import DocumentStatus
+from app.models.user import User
+from app.schemas.document import DocumentResponse
+from app.services.ai_extractor import ExtractionError, extract_logistics_data
+from app.services.upload_validation import read_and_validate_upload
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+
+@router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+async def upload_document(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DocumentResponse:
+    filename, content_type, file_content = await read_and_validate_upload(file)
+
+    document = await create_document(db, current_user.id, filename, content_type)
+    await update_document_status(db, document.id, DocumentStatus.PROCESSING)
+
+    if not settings.OPENAI_API_KEY:
+        document = await update_document_status(
+            db,
+            document.id,
+            DocumentStatus.PENDING,
+            error_logs="OPENAI_API_KEY is not configured",
+        )
+        if document is None:
+            raise DocumentNotFound()
+        return DocumentResponse.model_validate(document)
+
+    try:
+        extracted_data = await extract_logistics_data(file_content, filename, content_type)
+    except (ExtractionError, ValueError) as exc:
+        logger.info("Document extraction failed for document_id=%s: %s", document.id, exc)
+        document = await update_document_status(
+            db,
+            document.id,
+            DocumentStatus.FAILED,
+            error_logs=str(exc),
+        )
+        if document is None:
+            raise DocumentNotFound()
+        return DocumentResponse.model_validate(document)
+
+    document = await update_document_status(
+        db,
+        document.id,
+        DocumentStatus.EXTRACTED,
+        extracted_data=extracted_data.model_dump(),
+        error_logs=None,
+    )
+    if document is None:
+        raise DocumentNotFound()
+    return DocumentResponse.model_validate(document)
+
+
+@router.get("", response_model=list[DocumentResponse])
+async def list_documents(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[DocumentResponse]:
+    documents = await get_user_documents(db, current_user.id, skip, limit)
+    return [DocumentResponse.model_validate(document) for document in documents]
+
+
+@router.get("/{document_id}", response_model=DocumentResponse)
+async def get_document(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DocumentResponse:
+    document = await get_document_by_id(db, document_id)
+    if document is None:
+        raise DocumentNotFound()
+
+    if document.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    return DocumentResponse.model_validate(document)
+
+========== ./app/api/v1/webhooks.py ==========
+from fastapi import APIRouter, status
+
+router = APIRouter()
+
+
+@router.post("/email", status_code=status.HTTP_202_ACCEPTED)
+async def email_webhook() -> dict[str, str]:
+    return {"status": "accepted", "detail": "Email ingestion is not enabled in the MVP"}
+
+========== ./app/core/__init__.py ==========
+
+========== ./app/core/config.py ==========
+from functools import lru_cache
+from typing import Any
+
+from pydantic import Field, field_validator, ConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Runtime configuration loaded from environment variables."""
+
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
+
+    DATABASE_URL: str = "postgresql+asyncpg://logisparse_user:secretpassword@localhost:5432/logisparse_db"
+    SQLALCHEMY_ECHO: bool = False
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 10
+
+    SECRET_KEY: str = Field(default="change-me-in-production", min_length=16)
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    PASSWORD_MIN_LENGTH: int = 8
+
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o-mini"
+
+    APP_TITLE: str = "LogisParse"
+    APP_VERSION: str = "0.1.0"
+    DEBUG: bool = True
+    ENVIRONMENT: str = "development"
+    ALLOWED_ORIGINS: list[str] = Field(default=["http://localhost:3000", "http://localhost:8000"])
+
+    MAX_FILE_SIZE_MB: int = 20
+    ALLOWED_EXTENSIONS: list[str] = Field(default=["pdf", "jpg", "jpeg", "png"])
+    RATE_LIMIT_REQUESTS: int = 120
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
+
+    EMAIL_ADDRESS: str = ""
+    EMAIL_PASSWORD: str = ""
+    EMAIL_CHECK_INTERVAL_MINUTES: int = 2
+
+    LOG_LEVEL: str = "INFO"
+
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def parse_allowed_origins(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, list):
+            return value
+        return ["http://localhost:3000", "http://localhost:8000"]
+
+    @field_validator("ALLOWED_EXTENSIONS", mode="before")
+    @classmethod
+    def parse_allowed_extensions(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, list):
+            return value
+        return ["pdf", "jpg", "jpeg", "png"]
+
+    @property
+    def max_file_size_bytes(self) -> int:
+        return self.MAX_FILE_SIZE_MB * 1024 * 1024
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT.lower() == "production"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()
+
+========== ./app/core/database.py ==========
+from collections.abc import AsyncGenerator
+
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+
+from app.core.config import settings
+
+engine: AsyncEngine | None = None
+SessionLocal: async_sessionmaker[AsyncSession] | None = None
+
+
+def build_engine() -> AsyncEngine:
+    kwargs: dict[str, object] = {
+        "echo": settings.SQLALCHEMY_ECHO,
+        "future": True,
+        "pool_pre_ping": True,
+    }
+
+    if settings.DATABASE_URL.startswith("sqlite"):
+        kwargs["poolclass"] = NullPool
+    else:
+        kwargs["pool_size"] = settings.DB_POOL_SIZE
+        kwargs["max_overflow"] = settings.DB_MAX_OVERFLOW
+
+    return create_async_engine(settings.DATABASE_URL, **kwargs)
+
+
+async def init_db() -> None:
+    """Create the async engine and session factory."""
+    global engine, SessionLocal
+
+    if engine is not None and SessionLocal is not None:
+        return
+
+    engine = build_engine()
+    SessionLocal = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+    )
+
+
+async def close_db() -> None:
+    global engine, SessionLocal
+
+    if engine is not None:
+        await engine.dispose()
+    engine = None
+    SessionLocal = None
+
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    if SessionLocal is None:
+        await init_db()
+
+    if SessionLocal is None:
+        raise RuntimeError("Database session factory is not initialized")
+
+    async with SessionLocal() as session:
+        yield session
+
+========== ./app/core/exceptions.py ==========
+from fastapi import HTTPException, status
+
+
+class InvalidCredentialsException(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+class UserInactiveException(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inactive user",
+        )
+
+
+class DocumentNotFound(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+
+class EmailAlreadyRegistered(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+
+========== ./app/core/logging.py ==========
+import logging
+import sys
+from contextvars import ContextVar
+
+request_id_context: ContextVar[str] = ContextVar("request_id", default="-")
+
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = request_id_context.get()
+        return True
+
+
+def configure_logging(level: str = "INFO") -> None:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.addFilter(RequestIdFilter())
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s %(levelname)s [%(request_id)s] %(name)s: %(message)s"
+        )
+    )
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(level.upper())
+
+========== ./app/core/middleware.py ==========
+import time
+import uuid
+from collections import defaultdict, deque
+from collections.abc import Callable
+
+from fastapi import Request, Response, status
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from app.core.config import settings
+from app.core.logging import request_id_context
+
+
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+        token = request_id_context.set(request_id)
+        start = time.perf_counter()
+
+        try:
+            response = await call_next(request)
+        finally:
+            request_id_context.reset(token)
+
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Process-Time"] = f"{time.perf_counter() - start:.4f}"
+        return response
+
+
+class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
+    """Small single-process limiter for MVP abuse protection.
+
+    Use a reverse proxy or managed edge limiter once traffic runs across multiple
+    API replicas.
+    """
+
+    def __init__(self, app) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(app)
+        self.requests: defaultdict[str, deque[float]] = defaultdict(deque)
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        if request.url.path in {"/health", "/ready"}:
+            return await call_next(request)
+
+        now = time.monotonic()
+        client_ip = request.client.host if request.client else "unknown"
+        window = self.requests[client_ip]
+
+        while window and now - window[0] > settings.RATE_LIMIT_WINDOW_SECONDS:
+            window.popleft()
+
+        if len(window) >= settings.RATE_LIMIT_REQUESTS:
+            return Response(
+                content='{"detail":"Rate limit exceeded"}',
+                media_type="application/json",
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        window.append(now)
+        return await call_next(request)
+
+========== ./app/core/security.py ==========
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+
+from app.core.config import settings
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
+    expire = datetime.now(UTC) + (
+        expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+    payload = data.copy()
+    payload.update({"exp": expire})
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def decode_token(token: str) -> dict[str, Any] | None:
+    try:
+        return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except JWTError:
+        return None
+
+========== ./app/crud/__init__.py ==========
+
+========== ./app/crud/crud_document.py ==========
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.document import Document, DocumentStatus
+
+
+async def get_document_by_id(db: AsyncSession, document_id: str) -> Document | None:
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    return result.scalars().first()
+
+
+async def get_user_documents(
+    db: AsyncSession,
+    user_id: str,
+    skip: int = 0,
+    limit: int = 100,
+) -> list[Document]:
+    result = await db.execute(
+        select(Document)
+        .where(Document.user_id == user_id)
+        .order_by(Document.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def create_document(
+    db: AsyncSession,
+    user_id: str,
+    filename: str,
+    content_type: str | None,
+) -> Document:
+    document = Document(
+        filename=filename,
+        content_type=content_type,
+        user_id=user_id,
+        status=DocumentStatus.PENDING,
+    )
+    db.add(document)
+    await db.commit()
+    await db.refresh(document)
+    return document
+
+
+async def update_document_status(
+    db: AsyncSession,
+    document_id: str,
+    status: DocumentStatus,
+    extracted_data: dict[str, Any] | None = None,
+    error_logs: str | None = None,
+) -> Document | None:
+    document = await get_document_by_id(db, document_id)
+    if document is None:
+        return None
+
+    document.status = status
+    if extracted_data is not None:
+        document.extracted_data = extracted_data
+    if error_logs is not None:
+        document.error_logs = error_logs
+
+    await db.commit()
+    await db.refresh(document)
+    return document
+
+========== ./app/crud/crud_user.py ==========
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.security import hash_password, verify_password
+from app.models.user import User
+
+
+async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
+    result = await db.execute(select(User).where(User.email == email.lower()))
+    return result.scalars().first()
+
+
+async def get_user_by_id(db: AsyncSession, user_id: str) -> User | None:
+    result = await db.execute(select(User).where(User.id == user_id))
+    return result.scalars().first()
+
+
+async def create_user(
+    db: AsyncSession,
+    email: str,
+    password: str,
+    full_name: str | None = None,
+) -> User:
+    user = User(
+        email=email.lower(),
+        hashed_password=hash_password(password),
+        full_name=full_name,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+async def authenticate_user(db: AsyncSession, email: str, password: str) -> User | None:
+    user = await get_user_by_email(db, email)
+    if user is None or not verify_password(password, user.hashed_password):
+        return None
+    return user
+
+========== ./app/main.py ==========
+import logging
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from app.api.v1 import auth, documents, webhooks
+from app.core.config import settings
+from app.core.database import close_db, init_db
+from app.core.logging import configure_logging
+from app.core.middleware import InMemoryRateLimitMiddleware, RequestContextMiddleware
+
+configure_logging(settings.LOG_LEVEL)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+    logger.info("Starting %s %s", settings.APP_TITLE, settings.APP_VERSION)
+    await init_db()
+    yield
+    await close_db()
+    logger.info("Application shutdown complete")
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title=settings.APP_TITLE,
+        description="Document automation API for logistics operations.",
+        version=settings.APP_VERSION,
+        openapi_url="/api/openapi.json" if settings.DEBUG else None,
+        docs_url="/api/docs" if settings.DEBUG else None,
+        redoc_url="/api/redoc" if settings.DEBUG else None,
+        lifespan=lifespan,
+    )
+
+    app.add_middleware(InMemoryRateLimitMiddleware)
+    app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    )
+
+    app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
+    app.include_router(documents.router, prefix="/api/v1/documents", tags=["documents"])
+    app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["webhooks"])
+
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Internal server error"},
+        )
+
+    @app.get("/health", tags=["system"])
+    async def health_check() -> dict[str, str]:
+        return {"status": "ok", "version": settings.APP_VERSION}
+
+    @app.get("/ready", tags=["system"])
+    async def readiness_check() -> dict[str, str]:
+        return {"status": "ready"}
+
+    @app.get("/", tags=["system"])
+    async def root() -> dict[str, str]:
+        return {"name": settings.APP_TITLE, "docs": "/api/docs", "health": "/health"}
+
+    return app
+
+
+app = create_app()
+
+========== ./app/models/__init__.py ==========
+from app.models.base import Base
+from app.models.document import Document, DocumentStatus
+from app.models.user import User
+
+__all__ = ["Base", "Document", "DocumentStatus", "User"]
+
+========== ./app/models/base.py ==========
+import uuid
+from datetime import datetime
+
+from sqlalchemy import DateTime, String, func
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class BaseModel(Base):
+    """Common UUID and timestamp columns."""
+
+    __abstract__ = True
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+========== ./app/models/document.py ==========
+from __future__ import annotations
+
+from enum import Enum as PyEnum
+from typing import TYPE_CHECKING
+from typing import Any
+
+from sqlalchemy import JSON, Enum, ForeignKey, Index, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import BaseModel
+
+if TYPE_CHECKING:
+    from app.models.user import User
+
+
+class DocumentStatus(str, PyEnum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    EXTRACTED = "EXTRACTED"
+    FAILED = "FAILED"
+
+
+class Document(BaseModel):
+    __tablename__ = "documents"
+    __table_args__ = (
+        Index("idx_documents_user_id", "user_id"),
+        Index("idx_documents_status", "status"),
+    )
+
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status: Mapped[DocumentStatus] = mapped_column(
+        Enum(DocumentStatus, native_enum=False),
+        default=DocumentStatus.PENDING,
+        nullable=False,
+    )
+    extracted_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error_logs: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+
+    user: Mapped[User] = relationship(back_populates="documents")
+
+    def __repr__(self) -> str:
+        return f"<Document id={self.id} filename={self.filename} status={self.status}>"
+
+========== ./app/models/user.py ==========
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from sqlalchemy import Boolean, Index, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import BaseModel
+
+if TYPE_CHECKING:
+    from app.models.document import Document
+
+
+class User(BaseModel):
+    __tablename__ = "users"
+    __table_args__ = (Index("idx_users_email", "email"),)
+
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    documents: Mapped[list[Document]] = relationship(back_populates="user")
+
+    def __repr__(self) -> str:
+        return f"<User id={self.id} email={self.email}>"
+
+========== ./app/schemas/__init__.py ==========
+
+========== ./app/schemas/document.py ==========
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict
+
+from app.models.document import DocumentStatus
+
+
+class DocumentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    filename: str
+    content_type: str | None
+    status: DocumentStatus
+    extracted_data: dict[str, Any] | None
+    error_logs: str | None
+    created_at: datetime
+    updated_at: datetime
+
+========== ./app/schemas/extraction.py ==========
+from pydantic import BaseModel, Field
+
+
+class LogisticsItem(BaseModel):
+    sku: str | None = Field(default=None, description="Internal or supplier SKU when present")
+    descripcion: str = Field(description="Product or cargo description")
+    cantidad: int = Field(ge=0, description="Quantity detected in the document")
+    unidad: str | None = Field(default=None, description="Unit of measure")
+
+
+class ExtractedLogisticsData(BaseModel):
+    """Structured payload produced by the AI extraction pipeline."""
+
+    origen: str | None = Field(default=None, description="Dispatch origin")
+    destino: str | None = Field(default=None, description="Dispatch destination")
+    patente_camion: str | None = Field(default=None, description="Truck plate")
+    chofer: str | None = Field(default=None, description="Driver name")
+    fecha_despacho: str | None = Field(default=None, description="Dispatch date in YYYY-MM-DD format")
+    numero_guia: str | None = Field(default=None, description="Dispatch guide number")
+    items: list[LogisticsItem] = Field(default_factory=list, description="Cargo line items")
+    observaciones: str | None = Field(default=None, description="Additional observations")
+
+========== ./app/schemas/token.py ==========
+from pydantic import BaseModel
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class TokenData(BaseModel):
+    sub: str
+    exp: int
+
+========== ./app/schemas/user.py ==========
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    full_name: str | None = Field(default=None, max_length=255)
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class UserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    email: str
+    full_name: str | None
+    is_active: bool
+    created_at: datetime
+
+========== ./app/services/__init__.py ==========
+
+========== ./app/services/ai_extractor.py ==========
+"""AI extraction service for logistics documents."""
+
+import base64
+import logging
+from typing import Any
+
+from openai import APIError, AsyncOpenAI, RateLimitError
+
+from app.core.config import settings
+from app.schemas.extraction import ExtractedLogisticsData
+
+logger = logging.getLogger(__name__)
+
+SYSTEM_PROMPT = (
+    "You extract structured logistics data from Chilean dispatch guides, cargo tallies "
+    "and shipping documents. Return only facts present in the document. Use null when "
+    "a field is missing. Dates should use YYYY-MM-DD when the document provides enough "
+    "information."
+)
+
+USER_PROMPT = (
+    "Extract origin, destination, truck plate, driver, dispatch date, guide number, "
+    "line items, quantities, units and observations from this logistics document."
+)
+
+
+class ExtractionError(RuntimeError):
+    """Raised when the AI provider cannot produce a valid extraction."""
+
+
+def get_openai_client() -> AsyncOpenAI:
+    if not settings.OPENAI_API_KEY:
+        raise ExtractionError("OPENAI_API_KEY is not configured")
+    return AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+
+
+def build_file_part(file_bytes: bytes, filename: str, content_type: str) -> dict[str, Any]:
+    encoded = base64.b64encode(file_bytes).decode("utf-8")
+    if content_type == "application/pdf":
+        return {
+            "type": "input_file",
+            "filename": filename,
+            "file_data": f"data:application/pdf;base64,{encoded}",
+        }
+
+    return {
+        "type": "input_image",
+        "image_url": f"data:{content_type};base64,{encoded}",
+    }
+
+
+async def extract_logistics_data(
+    file_bytes: bytes,
+    filename: str,
+    content_type: str,
+    client: AsyncOpenAI | None = None,
+) -> ExtractedLogisticsData:
+    if len(file_bytes) < 20:
+        raise ValueError("File content is too small to process")
+
+    openai_client = client or get_openai_client()
+    file_part = build_file_part(file_bytes, filename, content_type)
+
+    try:
+        response = await openai_client.responses.parse(
+            model=settings.OPENAI_MODEL,
+            input=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        file_part,
+                        {"type": "input_text", "text": USER_PROMPT},
+                    ],
+                },
+            ],
+            text_format=ExtractedLogisticsData,
+            temperature=0,
+        )
+    except RateLimitError as exc:
+        logger.warning("OpenAI rate limit reached while processing %s", filename)
+        raise ExtractionError("AI provider rate limit reached") from exc
+    except APIError as exc:
+        logger.exception("OpenAI API error while processing %s", filename)
+        raise ExtractionError("AI provider error") from exc
+    except Exception as exc:
+        logger.exception("Unexpected extraction error while processing %s", filename)
+        raise ExtractionError("Unable to extract logistics data") from exc
+
+    if response.output_parsed is None:
+        raise ExtractionError("AI provider returned an empty structured response")
+
+    return response.output_parsed
+
+========== ./app/services/email_ingestion.py ==========
+"""Email ingestion placeholder.
+
+This stays intentionally small for the MVP. The production path should validate
+trusted senders, scan attachments, deduplicate documents and reuse the document
+pipeline instead of adding a parallel flow.
+"""
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class EmailAttachment:
+    filename: str
+    content: bytes
+
+
+@dataclass(frozen=True)
+class InboundEmail:
+    sender: str
+    subject: str | None
+    attachments: list[EmailAttachment]
+
+========== ./app/services/upload_validation.py ==========
+from pathlib import Path
+
+from fastapi import HTTPException, UploadFile, status
+
+from app.core.config import settings
+
+PDF_MAGIC = b"%PDF"
+JPEG_MAGIC = b"\xff\xd8\xff"
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+def sanitize_filename(filename: str | None) -> str:
+    if not filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File name is required",
+        )
+    return Path(filename).name.replace("\x00", "").strip()
+
+
+def detect_content_type(file_bytes: bytes) -> str:
+    if file_bytes.startswith(PDF_MAGIC):
+        return "application/pdf"
+    if file_bytes.startswith(JPEG_MAGIC):
+        return "image/jpeg"
+    if file_bytes.startswith(PNG_MAGIC):
+        return "image/png"
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Unsupported or invalid file content",
+    )
+
+
+async def read_and_validate_upload(file: UploadFile) -> tuple[str, str, bytes]:
+    filename = sanitize_filename(file.filename)
+    extension = Path(filename).suffix.lower().lstrip(".")
+    allowed_extensions = {item.lower() for item in settings.ALLOWED_EXTENSIONS}
+
+    if extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file extension. Allowed: {', '.join(sorted(allowed_extensions))}",
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File is empty")
+
+    if len(content) > settings.max_file_size_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds {settings.MAX_FILE_SIZE_MB}MB limit",
+        )
+
+    content_type = detect_content_type(content)
+    extension_content_map = {
+        "pdf": "application/pdf",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+    }
+    if extension_content_map.get(extension) != content_type:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File extension does not match its content",
+        )
+
+    return filename, content_type, content
+
+========== ./docker-compose.yml ==========
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-logisparse_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secretpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-logisparse_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-logisparse_user}:${POSTGRES_PASSWORD:-secretpassword}@db:5432/${POSTGRES_DB:-logisparse_db}
+    volumes:
+      - .:/app
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres_data:
+
+========== ./migrations/env.py ==========
+from logging.config import fileConfig
+from pathlib import Path
+import sys
+
+from alembic import context
+from sqlalchemy import pool
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import async_engine_from_config
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from app.core.config import settings
+from app.models import Base
+
+config = context.config
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+target_metadata = Base.metadata
+
+
+def run_migrations_offline() -> None:
+    context.configure(
+        url=settings.DATABASE_URL,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def do_run_migrations(connection: Connection) -> None:
+    context.configure(connection=connection, target_metadata=target_metadata)
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_async_migrations() -> None:
+    connectable = async_engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+
+    await connectable.dispose()
+
+
+def run_migrations_online() -> None:
+    import asyncio
+
+    asyncio.run(run_async_migrations())
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+
+========== ./migrations/versions/001_initial.py ==========
+"""Initial schema.
+
+Revision ID: 001_initial
+Revises:
+Create Date: 2026-05-26
+"""
+
+from alembic import op
+import sqlalchemy as sa
+
+revision = "001_initial"
+down_revision = None
+branch_labels = None
+depends_on = None
+
+
+def upgrade() -> None:
+    op.create_table(
+        "users",
+        sa.Column("id", sa.String(36), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("email", sa.String(255), nullable=False),
+        sa.Column("hashed_password", sa.String(255), nullable=False),
+        sa.Column("is_active", sa.Boolean(), nullable=False),
+        sa.Column("full_name", sa.String(255), nullable=True),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("email"),
+    )
+    op.create_index("idx_users_email", "users", ["email"])
+
+    op.create_table(
+        "documents",
+        sa.Column("id", sa.String(36), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("filename", sa.String(255), nullable=False),
+        sa.Column("content_type", sa.String(100), nullable=True),
+        sa.Column("status", sa.String(50), nullable=False),
+        sa.Column("extracted_data", sa.JSON(), nullable=True),
+        sa.Column("error_logs", sa.Text(), nullable=True),
+        sa.Column("user_id", sa.String(36), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index("idx_documents_user_id", "documents", ["user_id"])
+    op.create_index("idx_documents_status", "documents", ["status"])
+
+
+def downgrade() -> None:
+    op.drop_index("idx_documents_status", table_name="documents")
+    op.drop_index("idx_documents_user_id", table_name="documents")
+    op.drop_table("documents")
+    op.drop_index("idx_users_email", table_name="users")
+    op.drop_table("users")
+
+========== ./pyproject.toml ==========
+[project]
+name = "logisparse"
+version = "0.1.0"
+description = "Backend-first SaaS API for logistics document extraction."
+requires-python = ">=3.12"
+readme = "README.md"
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q --cov=app --cov-report=term-missing"
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+exclude = ["migrations"]
+
+========== ./setup.py ==========
+#!/usr/bin/env python3
+"""Quick setup script for LogisParse development."""
+import subprocess
+import sys
+from pathlib import Path
+
+def main() -> None:
+    """Setup development environment."""
+    root = Path(__file__).parent
+    
+    print("🚀 Setting up LogisParse development environment...")
+    
+    # Create virtualenv if it doesn't exist
+    venv_path = root / ".venv"
+    if not venv_path.exists():
+        print("📦 Creating virtual environment...")
+        subprocess.run([sys.executable, "-m", "venv", ".venv"], cwd=root, check=True)
+    
+    # Activate and install
+    pip = venv_path / ("Scripts/pip" if sys.platform == "win32" else "bin/pip")
+    print("📥 Installing dependencies...")
+    subprocess.run([str(pip), "install", "-q", "-r", "requirements.txt"], cwd=root, check=True)
+    
+    print("✅ Setup complete!")
+    print("\n📖 Next steps:")
+    print("  1. Activate virtual environment:")
+    if sys.platform == "win32":
+        print("     .venv\\Scripts\\Activate.ps1")
+    else:
+        print("     source .venv/bin/activate")
+    print("  2. Run tests:")
+    print("     pytest tests/ -v")
+    print("  3. Start development server:")
+    print("     uvicorn app.main:app --reload")
+
+if __name__ == "__main__":
+    main()
+
+========== ./tests/conftest.py ==========
+import os
+from collections.abc import AsyncGenerator, Generator
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
+
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-with-enough-length")
+os.environ.setdefault("OPENAI_API_KEY", "")
+
+from app.core.database import get_db
+from app.main import app
+from app.models import Base
+
+
+@pytest.fixture
+async def db_session() -> AsyncGenerator[AsyncSession, None]:
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        yield session
+
+    await engine.dispose()
+
+
+@pytest.fixture
+def client(db_session: AsyncSession) -> Generator[TestClient, None, None]:
+    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+========== ./tests/integration/test_api.py ==========
+"""Integration tests for API endpoints."""
+from fastapi.testclient import TestClient
+
+
+def register_and_login(client: TestClient) -> str:
+    """Helper to register and login a user, returning access token."""
+    response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "ops@example.com",
+            "password": "strong-password",
+            "full_name": "Ops User",
+        },
+    )
+    assert response.status_code == 201
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "ops@example.com", "password": "strong-password"},
+    )
+    assert response.status_code == 200
+    return response.json()["access_token"]
+
+
+def test_health_endpoint(client: TestClient) -> None:
+    """Test health check endpoint."""
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert "X-Request-ID" in response.headers
+
+
+def test_register_user(client: TestClient) -> None:
+    """Test user registration."""
+    response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "newuser@example.com",
+            "password": "strong-password",
+            "full_name": "New User",
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["email"] == "newuser@example.com"
+    assert body["is_active"] is True
+
+
+def test_register_duplicate_email(client: TestClient) -> None:
+    """Test duplicate email registration fails."""
+    payload = {"email": "dup@example.com", "password": "strong-password", "full_name": "User"}
+
+    response1 = client.post("/api/v1/auth/register", json=payload)
+    assert response1.status_code == 201
+
+    response2 = client.post("/api/v1/auth/register", json=payload)
+    assert response2.status_code == 400
+
+
+def test_login_user(client: TestClient) -> None:
+    """Test user login."""
+    # Register first
+    client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "login@example.com",
+            "password": "strong-password",
+            "full_name": "Login User",
+        },
+    )
+
+    # Login
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "login@example.com", "password": "strong-password"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert "access_token" in body
+    assert body["token_type"] == "bearer"
+
+
+def test_login_wrong_password(client: TestClient) -> None:
+    """Test login with wrong password fails."""
+    client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "wrongpass@example.com",
+            "password": "correct-password",
+            "full_name": "User",
+        },
+    )
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "wrongpass@example.com", "password": "wrong-password"},
+    )
+    assert response.status_code == 401
+
+
+def test_document_upload_requires_auth(client: TestClient) -> None:
+    """Test document upload requires authentication."""
+    response = client.get("/api/v1/documents")
+
+    assert response.status_code == 403
+    assert "detail" in response.json()
+
+
+def test_upload_valid_pdf(client: TestClient) -> None:
+    """Test uploading a valid PDF."""
+    token = register_and_login(client)
+    response = client.post(
+        "/api/v1/documents/upload",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": ("guide.pdf", b"%PDF-1.7 fake content for test", "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["filename"] == "guide.pdf"
+    assert body["content_type"] == "application/pdf"
+    assert body["status"] == "PENDING"
+    assert "id" in body
+    assert "uploaded_at" in body
+
+
+def test_upload_valid_png(client: TestClient) -> None:
+    """Test uploading a valid PNG."""
+    token = register_and_login(client)
+    response = client.post(
+        "/api/v1/documents/upload",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": ("image.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["filename"] == "image.png"
+    assert body["content_type"] == "image/png"
+
+
+def test_upload_rejects_extension_content_mismatch(client: TestClient) -> None:
+    """Test upload rejects mismatched file extension and content."""
+    token = register_and_login(client)
+    response = client.post(
+        "/api/v1/documents/upload",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": ("guide.pdf", b"\x89PNG\r\n\x1a\n fake png", "application/pdf")},
+    )
+
+    assert response.status_code == 400
+    assert "detail" in response.json()
+
+
+def test_upload_rejects_unsupported_file_type(client: TestClient) -> None:
+    """Test upload rejects unsupported file types."""
+    token = register_and_login(client)
+    response = client.post(
+        "/api/v1/documents/upload",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": ("document.docx", b"PK\x03\x04", "application/vnd.openxmlformats")},
+    )
+
+    assert response.status_code == 400
+
+
+def test_get_user_documents(client: TestClient) -> None:
+    """Test retrieving user's document list."""
+    token = register_and_login(client)
+
+    # Upload some documents
+    for i in range(3):
+        client.post(
+            "/api/v1/documents/upload",
+            headers={"Authorization": f"Bearer {token}"},
+            files={"file": (f"doc{i}.pdf", b"%PDF-1.7", "application/pdf")},
+        )
+
+    # Get list
+    response = client.get(
+        "/api/v1/documents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert "items" in body
+    assert "total" in body
+    assert body["total"] >= 3
+
+
+def test_get_specific_document(client: TestClient) -> None:
+    """Test retrieving a specific document."""
+    token = register_and_login(client)
+
+    # Upload
+    upload_response = client.post(
+        "/api/v1/documents/upload",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": ("specific.pdf", b"%PDF-1.7", "application/pdf")},
+    )
+    doc_id = upload_response.json()["id"]
+
+    # Get
+    response = client.get(
+        f"/api/v1/documents/{doc_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == doc_id
+    assert body["filename"] == "specific.pdf"
+
+
+def test_get_nonexistent_document_returns_404(client: TestClient) -> None:
+    """Test getting nonexistent document returns 404."""
+    token = register_and_login(client)
+    response = client.get(
+        "/api/v1/documents/nonexistent-id",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_pagination_parameters(client: TestClient) -> None:
+    """Test pagination parameters on document list."""
+    token = register_and_login(client)
+
+    # Upload multiple documents
+    for i in range(5):
+        client.post(
+            "/api/v1/documents/upload",
+            headers={"Authorization": f"Bearer {token}"},
+            files={"file": (f"doc{i}.pdf", b"%PDF-1.7", "application/pdf")},
+        )
+
+    # Test with limit
+    response = client.get(
+        "/api/v1/documents?limit=2",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert len(response.json()["items"]) <= 2
+
+    # Test with offset
+    response = client.get(
+        "/api/v1/documents?offset=2&limit=2",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+
+
+========== ./tests/integration/test_documents.py ==========
+"""Integration tests for document endpoints."""
+from fastapi.testclient import TestClient
+
+
+def register_and_login(client: TestClient) -> str:
+    """Helper to register and login a user, returning access token."""
+    response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "integration@example.com",
+            "password": "strong-password",
+            "full_name": "Integration User",
+        },
+    )
+    assert response.status_code == 201
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "integration@example.com", "password": "strong-password"},
+    )
+    assert response.status_code == 200
+    return response.json()["access_token"]
+
+
+def test_full_document_lifecycle(client: TestClient) -> None:
+    """Test full document upload -> list -> get flow."""
+    token = register_and_login(client)
+
+    # Upload document
+    upload_response = client.post(
+        "/api/v1/documents/upload",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": ("sample.pdf", b"%PDF-1.7 sample", "application/pdf")},
+    )
+    assert upload_response.status_code == 201
+    doc_id = upload_response.json()["id"]
+
+    # List documents
+    list_response = client.get(
+        "/api/v1/documents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert list_response.status_code == 200
+    docs = list_response.json()["items"]
+    assert len(docs) >= 1
+
+    # Get specific document
+    get_response = client.get(
+        f"/api/v1/documents/{doc_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert get_response.status_code == 200
+    doc = get_response.json()
+    assert doc["id"] == doc_id
+    assert doc["filename"] == "sample.pdf"
+
+
+def test_document_access_control(client: TestClient) -> None:
+    """Test that users can only access their own documents."""
+    # User 1 uploads a document
+    token1 = register_and_login(client)
+    response1 = client.post(
+        "/api/v1/documents/upload",
+        headers={"Authorization": f"Bearer {token1}"},
+        files={"file": ("doc1.pdf", b"%PDF-1.7", "application/pdf")},
+    )
+    assert response1.status_code == 201
+    doc_id = response1.json()["id"]
+
+    # User 2 tries to access it (should fail)
+    response2 = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "user2@example.com",
+            "password": "password",
+            "full_name": "User 2",
+        },
+    )
+    assert response2.status_code == 201
+
+    login2 = client.post(
+        "/api/v1/auth/login",
+        json={"email": "user2@example.com", "password": "password"},
+    )
+    token2 = login2.json()["access_token"]
+
+    access_attempt = client.get(
+        f"/api/v1/documents/{doc_id}",
+        headers={"Authorization": f"Bearer {token2}"},
+    )
+    assert access_attempt.status_code == 404
+
+
+def test_upload_image_variations(client: TestClient) -> None:
+    """Test uploading different image formats."""
+    token = register_and_login(client)
+
+    # PNG
+    png_response = client.post(
+        "/api/v1/documents/upload",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": ("image.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+    )
+    assert png_response.status_code == 201
+
+    # JPG
+    jpg_response = client.post(
+        "/api/v1/documents/upload",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": ("image.jpg", b"\xff\xd8\xff\xe0", "image/jpeg")},
+    )
+    assert jpg_response.status_code == 201
+
+
+def test_pagination_on_documents_list(client: TestClient) -> None:
+    """Test pagination works on document list."""
+    token = register_and_login(client)
+
+    # Upload 3 documents
+    for i in range(3):
+        client.post(
+            "/api/v1/documents/upload",
+            headers={"Authorization": f"Bearer {token}"},
+            files={"file": (f"doc{i}.pdf", b"%PDF-1.7", "application/pdf")},
+        )
+
+    # List with limit
+    response = client.get(
+        "/api/v1/documents?limit=2",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["items"]) <= 2
+    assert "total" in body
+
+========== ./tests/unit/test_ai_extractor.py ==========
+from app.services.ai_extractor import build_file_part
+
+
+def test_build_pdf_file_part_uses_responses_file_input() -> None:
+    part = build_file_part(b"%PDF-1.7", "guide.pdf", "application/pdf")
+
+    assert part["type"] == "input_file"
+    assert part["filename"] == "guide.pdf"
+    assert part["file_data"].startswith("data:application/pdf;base64,")
+
+
+def test_build_image_part_uses_image_input() -> None:
+    part = build_file_part(b"\x89PNG\r\n\x1a\n", "guide.png", "image/png")
+
+    assert part["type"] == "input_image"
+    assert part["image_url"].startswith("data:image/png;base64,")
+
+========== ./tests/unit/test_crud.py ==========
+"""Tests for CRUD operations."""
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.crud.crud_document import create_document, get_document_by_id, get_user_documents, update_document_status
+from app.crud.crud_user import create_user, get_user_by_email, authenticate_user
+from app.models.document import DocumentStatus
+
+
+@pytest.mark.asyncio
+async def test_create_user(db_session: AsyncSession) -> None:
+    """Test user creation."""
+    user = await create_user(db_session, "test@example.com", "password123456", "Test User")
+
+    assert user.email == "test@example.com"
+    assert user.hashed_password != "password123456"
+
+
+@pytest.mark.asyncio
+async def test_get_user_by_email(db_session: AsyncSession) -> None:
+    """Test retrieving user by email."""
+    await create_user(db_session, "search@example.com", "password123456", "Search User")
+    found_user = await get_user_by_email(db_session, "search@example.com")
+
+    assert found_user is not None
+    assert found_user.email == "search@example.com"
+
+
+@pytest.mark.asyncio
+async def test_get_nonexistent_user_returns_none(db_session: AsyncSession) -> None:
+    """Test retrieving nonexistent user."""
+    found_user = await get_user_by_email(db_session, "nonexistent@example.com")
+    assert found_user is None
+
+
+@pytest.mark.asyncio
+async def test_authenticate_user(db_session: AsyncSession) -> None:
+    """Test user authentication."""
+    await create_user(db_session, "auth@example.com", "correct_password_123", "Auth User")
+    authenticated = await authenticate_user(db_session, "auth@example.com", "correct_password_123")
+
+    assert authenticated is not None
+    assert authenticated.email == "auth@example.com"
+
+
+@pytest.mark.asyncio
+async def test_authenticate_with_wrong_password_returns_none(db_session: AsyncSession) -> None:
+    """Test authentication with wrong password."""
+    await create_user(db_session, "wrong@example.com", "correct_password_123", "Wrong User")
+    authenticated = await authenticate_user(db_session, "wrong@example.com", "wrong_password_000")
+
+    assert authenticated is None
+
+
+@pytest.mark.asyncio
+async def test_create_document(db_session: AsyncSession) -> None:
+    """Test document creation."""
+    user = await create_user(db_session, "doc_owner@example.com", "password123456", "Doc Owner")
+
+    doc = await create_document(db_session, user.id, "test.pdf", "application/pdf")
+
+    assert doc.filename == "test.pdf"
+    assert doc.status == DocumentStatus.PENDING
+    assert doc.user_id == user.id
+
+
+@pytest.mark.asyncio
+async def test_update_document_status(db_session: AsyncSession) -> None:
+    """Test updating document status."""
+    user = await create_user(db_session, "status@example.com", "password123456", "Status User")
+    doc = await create_document(db_session, user.id, "status.pdf", "application/pdf")
+
+    updated = await update_document_status(db_session, doc.id, DocumentStatus.EXTRACTED)
+
+    assert updated is not None
+    assert updated.status == DocumentStatus.EXTRACTED
+
+
+@pytest.mark.asyncio
+async def test_get_user_documents(db_session: AsyncSession) -> None:
+    """Test retrieving user's documents."""
+    user = await create_user(db_session, "list@example.com", "password123456", "List User")
+
+    await create_document(db_session, user.id, "doc1.pdf", "application/pdf")
+    await create_document(db_session, user.id, "doc2.pdf", "application/pdf")
+
+    docs = await get_user_documents(db_session, user.id)
+
+    assert len(docs) == 2
+    assert all(d.user_id == user.id for d in docs)
+
+========== ./tests/unit/test_schemas.py ==========
+"""Tests for Pydantic schemas validation."""
+import pytest
+from pydantic import ValidationError
+
+from app.schemas.document import DocumentResponse
+from app.schemas.extraction import ExtractedLogisticsData
+from app.schemas.token import TokenResponse
+from app.schemas.user import UserCreate, UserLogin
+
+
+def test_user_create_validation() -> None:
+    """Test UserCreate schema validation."""
+    # Valid user
+    user = UserCreate(email="test@example.com", password="validpassword123", full_name="Test")
+    assert user.email == "test@example.com"
+
+    # Invalid email
+    with pytest.raises(ValidationError):
+        UserCreate(email="not-an-email", password="validpassword123", full_name="Test")
+
+
+def test_user_login_validation() -> None:
+    """Test UserLogin schema validation."""
+    login = UserLogin(email="test@example.com", password="password123")
+    assert login.email == "test@example.com"
+
+    with pytest.raises(ValidationError):
+        UserLogin(email="invalid-email", password="password123")
+
+
+def test_token_response_validation() -> None:
+    """Test TokenResponse schema validation."""
+    token = TokenResponse(access_token="abc123", token_type="bearer")
+    assert token.token_type == "bearer"
+
+
+def test_extracted_logistics_data_validation() -> None:
+    """Test ExtractedLogisticsData schema."""
+    data = ExtractedLogisticsData(
+        origen="Puerto Montt",
+        destino="Puerto Varas",
+        patente_camion="ABC-1234",
+        fecha_despacho="2026-05-29",
+        items=[
+            {"sku": "SALMON-001", "cantidad": 100},
+            {"sku": "SALMON-002", "cantidad": 250},
+        ],
+    )
+    assert data.origen == "Puerto Montt"
+    assert len(data.items) == 2
+
+
+def test_document_response_validation() -> None:
+    """Test DocumentResponse schema."""
+    from datetime import datetime
+
+    doc = DocumentResponse(
+        id="doc-123",
+        filename="guide.pdf",
+        content_type="application/pdf",
+        status="PENDING",
+        uploaded_at=datetime.now(),
+    )
+    assert doc.filename == "guide.pdf"
+    assert doc.status == "PENDING"
+
+========== ./tests/unit/test_security.py ==========
+"""Tests for security utilities."""
+from datetime import timedelta
+
+from app.core.security import create_access_token, decode_token, hash_password, verify_password
+
+
+def test_password_hash_roundtrip() -> None:
+    """Test password hashing and verification."""
+    hashed = hash_password("strong-password-123")
+
+    assert hashed != "strong-password-123"
+    assert verify_password("strong-password-123", hashed)
+    assert not verify_password("wrong-password", hashed)
+
+
+def test_jwt_roundtrip() -> None:
+    """Test JWT token creation and decoding."""
+    token = create_access_token({"sub": "user-123"}, expires_delta=timedelta(minutes=5))
+    payload = decode_token(token)
+
+    assert payload is not None
+    assert payload["sub"] == "user-123"
+
+========== ./tests/unit/test_upload_validation.py ==========
+import pytest
+from fastapi import HTTPException, UploadFile
+
+from app.services.upload_validation import detect_content_type, sanitize_filename
+
+
+def test_detect_content_type_pdf() -> None:
+    assert detect_content_type(b"%PDF-1.7 content") == "application/pdf"
+
+
+def test_detect_content_type_rejects_unknown_bytes() -> None:
+    with pytest.raises(HTTPException):
+        detect_content_type(b"not a supported file")
+
+
+def test_sanitize_filename_strips_paths() -> None:
+    assert sanitize_filename("../nested/guide.pdf") == "guide.pdf"
+
+
+def test_upload_file_import_available() -> None:
+    assert UploadFile is not None
