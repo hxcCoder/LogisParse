@@ -44,10 +44,10 @@ router = APIRouter()
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_document(
-    file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    settings: Annotated[Settings, Depends(get_settings_dep)] = None,
+    file: Annotated[UploadFile, File()],
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> DocumentResponse:
     filename, content_type, file_content = await read_and_validate_upload(file)
 
@@ -58,14 +58,16 @@ async def upload_document(
         content_type=content_type,
     )
 
-    document = await update_document_status(
+    processing_document = await update_document_status(
         db=db,
         document_id=document.id,
         status=DocumentStatus.PROCESSING,
     )
 
-    if document is None:
+    if processing_document is None:
         raise DocumentNotFound()
+
+    document = processing_document
 
     try:
         extracted_data = await extract_document(
@@ -90,11 +92,11 @@ async def upload_document(
         )
 
         if failed_document is None:
-            raise DocumentNotFound()
+            raise DocumentNotFound() from exc
 
         return DocumentResponse.model_validate(failed_document)
 
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "Unexpected extraction error for document_id=%s",
             document.id,
@@ -108,7 +110,7 @@ async def upload_document(
         )
 
         if failed_document is None:
-            raise DocumentNotFound()
+            raise DocumentNotFound() from exc
 
         return DocumentResponse.model_validate(failed_document)
 
@@ -143,10 +145,7 @@ async def list_documents(
         limit=limit,
     )
 
-    return [
-        DocumentResponse.model_validate(document)
-        for document in documents
-    ]
+    return [DocumentResponse.model_validate(document) for document in documents]
 
 
 @router.get(

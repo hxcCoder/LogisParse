@@ -1,9 +1,14 @@
 """Tests for CRUD operations."""
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.crud.crud_document import create_document, get_document_by_id, get_user_documents, update_document_status
-from app.crud.crud_user import create_user, get_user_by_email, authenticate_user
+from app.crud.crud_document import (
+    create_document,
+    get_user_documents,
+    update_document_status,
+)
+from app.crud.crud_user import authenticate_user, create_user, get_user_by_email
 from app.models.document import DocumentStatus
 
 

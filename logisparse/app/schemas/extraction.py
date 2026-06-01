@@ -15,7 +15,10 @@ class ExtractedLogisticsData(BaseModel):
     destino: str | None = Field(default=None, description="Dispatch destination")
     patente_camion: str | None = Field(default=None, description="Truck plate")
     chofer: str | None = Field(default=None, description="Driver name")
-    fecha_despacho: str | None = Field(default=None, description="Dispatch date in YYYY-MM-DD format")
+    fecha_despacho: str | None = Field(
+        default=None,
+        description="Dispatch date in YYYY-MM-DD format",
+    )
     numero_guia: str | None = Field(default=None, description="Dispatch guide number")
     items: list[LogisticsItem] = Field(default_factory=list, description="Cargo line items")
     observaciones: str | None = Field(default=None, description="Additional observations")

@@ -1,4 +1,5 @@
 """Tests for security utilities."""
+
 from datetime import timedelta
 
 from app.core.security import create_access_token, decode_token, hash_password, verify_password
@@ -17,12 +18,12 @@ def test_jwt_roundtrip() -> None:
     """Test JWT token creation and decoding."""
     secret_key = "test-secret-key-at-least-32-chars-long-!!"
     algorithm = "HS256"
-    
+
     token = create_access_token(
         {"sub": "user-123"},
         secret_key=secret_key,
         algorithm=algorithm,
-        expires_delta=timedelta(minutes=5)
+        expires_delta=timedelta(minutes=5),
     )
     payload = decode_token(token, secret_key, algorithm)
 

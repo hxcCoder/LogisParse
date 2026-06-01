@@ -29,7 +29,7 @@ security = HTTPBearer(auto_error=True)
 # ── SETTINGS DEPENDENCY ──────────────────────────────────
 def get_settings_dep() -> Settings:
     """Inject Settings instance.
-    
+
     This can be overridden in tests:
     app.dependency_overrides[get_settings_dep] = lambda: fake_settings
     """
@@ -39,23 +39,23 @@ def get_settings_dep() -> Settings:
 # ── DATABASE DEPENDENCY ──────────────────────────────────
 async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     """Inject AsyncSession from FastAPI app.state.session_maker.
-    
+
     The session_maker must be set during app startup (in lifespan).
-    
+
     This dependency:
     - Retrieves session_maker from app.state (set during startup)
     - Creates a new session per request
     - Automatically yields and closes the session
     - Can be overridden in tests via app.dependency_overrides[get_db]
-    
+
     Args:
         request: FastAPI Request object (contains app.state)
-        
+
     Yields:
         AsyncSession instance for database operations
     """
     session_maker: async_sessionmaker[AsyncSession] = request.app.state.session_maker
-    
+
     async with session_maker() as session:
         yield session
 
@@ -67,15 +67,15 @@ async def get_current_user(
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> User:
     """Inject current authenticated user from JWT token.
-    
+
     Args:
         credentials: JWT token from Authorization header
         db: Database session
         settings: Settings for JWT decoding
-        
+
     Returns:
         Authenticated and active User instance
-        
+
     Raises:
         InvalidCredentialsException: If token is invalid or user not found
         UserInactiveException: If user is not active

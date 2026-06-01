@@ -25,6 +25,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
+      - name: Lint
+        run: ruff check .
+
+      - name: Format check
+        run: ruff format --check .
+
+      - name: Type check
+        run: mypy app
+
       - name: Test with coverage
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"

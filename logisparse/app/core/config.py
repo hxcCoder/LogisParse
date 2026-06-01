@@ -16,8 +16,7 @@ class Settings(BaseSettings):
     )
 
     DATABASE_URL: str = (
-        "postgresql+asyncpg://logisparse_user:"
-        "secretpassword@localhost:5432/logisparse_db"
+        "postgresql+asyncpg://logisparse_user:secretpassword@localhost:5432/logisparse_db"
     )
 
     SQLALCHEMY_ECHO: bool = False
@@ -51,9 +50,7 @@ class Settings(BaseSettings):
 
     MAX_FILE_SIZE_MB: int = 20
 
-    ALLOWED_EXTENSIONS: list[str] = Field(
-        default=["pdf", "jpg", "jpeg", "png"]
-    )
+    ALLOWED_EXTENSIONS: list[str] = Field(default=["pdf", "jpg", "jpeg", "png"])
 
     RATE_LIMIT_REQUESTS: int = 120
     RATE_LIMIT_WINDOW_SECONDS: int = 60
@@ -68,11 +65,7 @@ class Settings(BaseSettings):
     @classmethod
     def parse_allowed_origins(cls, value: Any) -> list[str]:
         if isinstance(value, str):
-            return [
-                item.strip()
-                for item in value.split(",")
-                if item.strip()
-            ]
+            return [item.strip() for item in value.split(",") if item.strip()]
 
         if isinstance(value, list):
             return value
@@ -86,11 +79,7 @@ class Settings(BaseSettings):
     @classmethod
     def parse_allowed_extensions(cls, value: Any) -> list[str]:
         if isinstance(value, str):
-            return [
-                item.strip()
-                for item in value.split(",")
-                if item.strip()
-            ]
+            return [item.strip() for item in value.split(",") if item.strip()]
 
         if isinstance(value, list):
             return value

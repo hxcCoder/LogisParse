@@ -1,4 +1,4 @@
-from app.services.document_extractor import run_regex, missing_fields, to_schema
+from app.services.document_extractor import missing_fields, run_regex, to_schema
 
 
 def test_run_regex_full_document():

@@ -32,13 +32,13 @@ def create_access_token(
     expires_delta: timedelta | None = None,
 ) -> str:
     """Create JWT access token.
-    
+
     Args:
         data: Payload data to encode
         secret_key: Secret key for signing
         algorithm: JWT algorithm (e.g., "HS256")
         expires_delta: Optional expiration delta
-        
+
     Returns:
         JWT token string
     """
@@ -50,12 +50,12 @@ def create_access_token(
 
 def decode_token(token: str, secret_key: str, algorithm: str) -> dict[str, Any] | None:
     """Decode and verify JWT token.
-    
+
     Args:
         token: JWT token string
         secret_key: Secret key for verification
         algorithm: JWT algorithm (e.g., "HS256")
-        
+
     Returns:
         Decoded payload dict, or None if invalid
     """

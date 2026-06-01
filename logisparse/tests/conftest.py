@@ -7,7 +7,6 @@ This conftest.py demonstrates:
 4. Avoid touching real PostgreSQL or production resources
 """
 
-import asyncio
 import os
 import sys
 from collections.abc import AsyncGenerator, Generator
@@ -34,14 +33,10 @@ def pytest_configure(config):
     os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
     os.environ["SECRET_KEY"] = "test-secret-key-at-least-32-chars-long-!!"
     os.environ["OPENAI_API_KEY"] = "test-key-not-real"
-    
+
     # Register custom markers
-    config.addinivalue_line(
-        "markers", "integration: marks tests as integration tests"
-    )
-    config.addinivalue_line(
-        "markers", "unit: marks tests as unit tests"
-    )
+    config.addinivalue_line("markers", "integration: marks tests as integration tests")
+    config.addinivalue_line("markers", "unit: marks tests as unit tests")
 
 
 # ── TEST SETTINGS FIXTURE ─────────────────────────────
@@ -103,6 +98,7 @@ async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
 @pytest.fixture
 def override_get_db(db_session: AsyncSession):
     """Override get_db dependency with test session."""
+
     async def _get_db() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
 
@@ -115,6 +111,7 @@ def override_get_db(db_session: AsyncSession):
 @pytest.fixture
 def override_get_settings(test_settings: Settings):
     """Override get_settings_dep dependency with test settings."""
+
     def _get_settings() -> Settings:
         return test_settings
 

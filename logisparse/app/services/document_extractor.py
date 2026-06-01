@@ -7,12 +7,13 @@ Pipeline:
 3. AI fallback (only missing fields)
 """
 
-import base64
 import logging
 import re
 from dataclasses import dataclass, field
 from io import BytesIO
+from typing import Any
 
+from app.core.config import Settings
 from app.schemas.extraction import ExtractedLogisticsData, LogisticsItem
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────
 # TEXT EXTRACTION
 # ─────────────────────────────────────────────────────────────
+
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     try:
@@ -75,7 +77,10 @@ _RE_GUIA = re.compile(r"(?:gu[ií]a|folio|nro)\s*[:#]?\s*(\d{4,10})", re.I)
 _RE_FECHA = re.compile(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b")
 _RE_ORIGEN = re.compile(r"origen\s*:\s*([A-Za-záéíóúñ]+(?:[ ]+[A-Za-záéíóúñ]+)*)", re.I)
 _RE_DESTINO = re.compile(r"destino\s*:\s*([A-Za-záéíóúñ]+(?:[ ]+[A-Za-záéíóúñ]+)*)", re.I)
-_RE_CHOFER = re.compile(r"(?:chofer|conductor)\s*:\s*([A-Za-záéíóúñ]+(?:[ ]+[A-Za-záéíóúñ]+)*)", re.I)
+_RE_CHOFER = re.compile(
+    r"(?:chofer|conductor)\s*:\s*([A-Za-záéíóúñ]+(?:[ ]+[A-Za-záéíóúñ]+)*)",
+    re.I,
+)
 
 _RE_ITEM = re.compile(
     r"(\d+(?:[.,]\d+)?)\s*(kg|caja|cajas|un|unid|lts?)?\s+([A-Za-záéíóúñ\s]{3,50})",
@@ -86,6 +91,7 @@ _RE_ITEM = re.compile(
 # ─────────────────────────────────────────────────────────────
 # DATA STRUCTURES
 # ─────────────────────────────────────────────────────────────
+
 
 @dataclass
 class RegexResult:
@@ -102,6 +108,7 @@ class RegexResult:
 # ─────────────────────────────────────────────────────────────
 # REGEX ENGINE
 # ─────────────────────────────────────────────────────────────
+
 
 def run_regex(text: str) -> RegexResult:
     r = RegexResult()
@@ -152,6 +159,7 @@ def run_regex(text: str) -> RegexResult:
 # HELPERS
 # ─────────────────────────────────────────────────────────────
 
+
 def missing_fields(r: RegexResult) -> list[str]:
     fields = []
     if not r.origen:
@@ -186,7 +194,13 @@ def to_schema(r: RegexResult) -> ExtractedLogisticsData:
 # AI FALLBACK (FIXED TYPES)
 # ─────────────────────────────────────────────────────────────
 
-async def ai_complete(text: str, r: RegexResult, missing: list[str], settings) -> ExtractedLogisticsData:
+
+async def ai_complete(
+    text: str,
+    r: RegexResult,
+    missing: list[str],
+    settings: Settings,
+) -> ExtractedLogisticsData:
     """Complete extraction using OpenAI API for missing fields."""
     from openai import AsyncOpenAI
 
@@ -195,7 +209,7 @@ async def ai_complete(text: str, r: RegexResult, missing: list[str], settings) -
 
     client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
-    input_messages = [
+    input_messages: list[Any] = [
         {
             "role": "system",
             "content": "Extract logistics data. Return only factual information.",
@@ -230,6 +244,8 @@ async def ai_complete(text: str, r: RegexResult, missing: list[str], settings) -
         items=r.items if r.items else ai.items,
         observaciones=ai.observaciones,
     )
+
+
 # ─────────────────────────────────────────────────────────────
 # MAIN PIPELINE
 # ─────────────────────────────────────────────────────────────
@@ -237,7 +253,12 @@ async def ai_complete(text: str, r: RegexResult, missing: list[str], settings) -
 AI_THRESHOLD = 0.7
 
 
-async def extract_document(file_bytes: bytes, filename: str, content_type: str, settings) -> ExtractedLogisticsData:
+async def extract_document(
+    file_bytes: bytes,
+    filename: str,
+    content_type: str,
+    settings: Settings,
+) -> ExtractedLogisticsData:
     if len(file_bytes) < 20:
         raise ValueError("file too small")
 

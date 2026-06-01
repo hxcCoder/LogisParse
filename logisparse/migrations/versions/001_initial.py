@@ -5,8 +5,8 @@ Revises:
 Create Date: 2026-05-26
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = "001_initial"
 down_revision = None
@@ -18,8 +18,18 @@ def upgrade() -> None:
     op.create_table(
         "users",
         sa.Column("id", sa.String(36), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.Column("email", sa.String(255), nullable=False),
         sa.Column("hashed_password", sa.String(255), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False),
@@ -32,8 +42,18 @@ def upgrade() -> None:
     op.create_table(
         "documents",
         sa.Column("id", sa.String(36), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.Column("filename", sa.String(255), nullable=False),
         sa.Column("content_type", sa.String(100), nullable=True),
         sa.Column("status", sa.String(50), nullable=False),

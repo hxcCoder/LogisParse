@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from enum import Enum as PyEnum
-from typing import TYPE_CHECKING
-from typing import Any
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import JSON, Enum, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -13,7 +12,7 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
-class DocumentStatus(str, PyEnum):
+class DocumentStatus(StrEnum):
     PENDING = "PENDING"
     PROCESSING = "PROCESSING"
     EXTRACTED = "EXTRACTED"

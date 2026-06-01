@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_settings_dep, get_db
+from app.api.deps import get_db, get_settings_dep
 from app.core.config import Settings
 from app.core.exceptions import (
     EmailAlreadyRegistered,
@@ -69,9 +69,7 @@ async def login(
         data={"sub": str(user.id)},
         secret_key=settings.SECRET_KEY,
         algorithm=settings.ALGORITHM,
-        expires_delta=timedelta(
-            minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
-        ),
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     )
 
     return TokenResponse(access_token=access_token)

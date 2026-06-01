@@ -4,7 +4,12 @@ Pure functional approach - no global state mutations.
 All database resources are created explicitly and managed via FastAPI lifespan.
 """
 
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import NullPool
 
 from app.core.config import Settings
@@ -12,13 +17,13 @@ from app.core.config import Settings
 
 def build_engine(settings: Settings) -> AsyncEngine:
     """Create AsyncEngine instance based on settings.
-    
+
     This is a pure function - no side effects, no global state.
     Call this once during app startup and store result in app.state.
-    
+
     Args:
         settings: Settings instance with database configuration
-        
+
     Returns:
         Configured AsyncEngine instance
     """
@@ -41,12 +46,12 @@ def build_session_maker(
     engine: AsyncEngine,
 ) -> async_sessionmaker[AsyncSession]:
     """Create AsyncSessionMaker instance.
-    
+
     This is a pure function - creates a new session factory for the given engine.
-    
+
     Args:
         engine: AsyncEngine instance
-        
+
     Returns:
         Configured async_sessionmaker instance
     """

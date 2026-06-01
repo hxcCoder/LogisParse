@@ -5,16 +5,17 @@ Covers auth flow, document upload/list/get, access control, and pagination.
 All external processing (OCR / AI) is mocked to ensure deterministic tests.
 """
 
-from fastapi.testclient import TestClient
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
+
 import pytest
+from fastapi.testclient import TestClient
 
 from app.schemas.extraction import ExtractedLogisticsData
-
 
 # ─────────────────────────────────────────────────────────────
 # MOCK GLOBAL (extractor)
 # ─────────────────────────────────────────────────────────────
+
 
 @pytest.fixture(autouse=True)
 def mock_document_extractor():
@@ -34,6 +35,7 @@ def mock_document_extractor():
 
 
 # ── helpers ──────────────────────────────────────────────────
+
 
 def _register(client: TestClient, email: str, password: str = "strong-password") -> None:
     response = client.post(
@@ -69,6 +71,7 @@ def _upload_pdf(client: TestClient, token: str, filename: str = "guide.pdf") -> 
 
 # ── system endpoints ─────────────────────────────────────────
 
+
 def test_health_endpoint(client: TestClient) -> None:
     response = client.get("/health")
     assert response.status_code == 200
@@ -86,10 +89,15 @@ def test_root_endpoint(client: TestClient) -> None:
 
 # ── auth ─────────────────────────────────────────────────────
 
+
 def test_register_user(client: TestClient) -> None:
     response = client.post(
         "/api/v1/auth/register",
-        json={"email": "newuser@example.com", "password": "strong-password", "full_name": "New User"},
+        json={
+            "email": "newuser@example.com",
+            "password": "strong-password",
+            "full_name": "New User",
+        },
     )
     assert response.status_code == 201
     body = response.json()
@@ -128,6 +136,7 @@ def test_login_wrong_password_returns_401(client: TestClient) -> None:
 
 
 # ── documents ───────────────────────────────────────────────
+
 
 def test_document_list_requires_auth(client: TestClient) -> None:
     response = client.get("/api/v1/documents")
