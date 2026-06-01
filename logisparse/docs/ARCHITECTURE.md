@@ -1,30 +1,30 @@
-# Architecture
+# Architecture Notes
 
-LogisParse is a **modular monolith** backend designed for simplicity and operational clarity.
+LogisParse is a modular FastAPI backend. The application keeps the operational shape small: HTTP API, explicit dependencies, async persistence and a focused extraction service.
 
-## Project Structure
-
+```mermaid
+flowchart LR
+    API["FastAPI routers"] --> Deps["Dependency injection"]
+    API --> Services["Services"]
+    API --> Crud["CRUD"]
+    Deps --> Settings["Settings"]
+    Deps --> Session["AsyncSession"]
+    Services --> Extractor["Document extractor"]
+    Crud --> DB[("Database")]
 ```
-app/
-├── api/v1/           # HTTP routes: auth, documents, webhooks
-├── core/             # Config, database, security, middleware
-├── models/           # SQLAlchemy ORM (users, documents)
-├── schemas/          # Pydantic I/O contracts
-├── crud/             # Data persistence helpers
-└── services/         # Business logic (AI extraction, email ingestion)
-```
 
-## Key Components
+## Boundaries
 
-- **API Layer**: FastAPI routers with JWT auth, upload validation, rate limiting
-- **Services**: Business workflows (OpenAI structured extraction)
-- **CRUD**: Focused database operations via SQLAlchemy async
-- **Models**: User and Document tables with proper indexing
-- **Core**: Configuration, async PostgreSQL connection, JWT/bcrypt security
+| Area | Responsibility |
+| --- | --- |
+| `api/v1` | HTTP contracts and status codes |
+| `api/deps.py` | Request dependencies: settings, DB session, authenticated user |
+| `core` | Infrastructure: config, database, security, middleware |
+| `services` | File validation and document extraction |
+| `crud` | SQLAlchemy persistence operations |
+| `models` | Database tables |
+| `schemas` | Pydantic request/response and extraction contracts |
 
-## Simple & Fast
+## Principle
 
-- No Kafka/Redis/Celery — just async Python tasks
-- PostgreSQL is the source of truth
-- Rate limiting and CORS configured by default
-- Email ingestion is a future feature placeholder
+Keep business flow visible in the route, keep infrastructure injected, and keep document parsing isolated in services.
