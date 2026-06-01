@@ -1,4 +1,6 @@
 # LogisParse - Logistics Document Automation SaaS
+[![CI](https://github.com/hxcCoder/LogisParse/actions/workflows/ci.yml/badge.svg)](https://github.com/hxcCoder/LogisParse/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/hxcCoder/LogisParse/branch/main/graph/badge.svg)](https://codecov.io/gh/hxcCoder/LogisParse)
 
 Backend API for automatic extraction of logistics data from PDFs and images using OpenAI's Structured Outputs.
 
