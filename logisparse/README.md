@@ -7,6 +7,25 @@ Backend API for automatic extraction of logistics data from PDFs and images usin
 
 ---
 
+## Architecture: Dependency Injection (DI)
+
+This project follows **explicit dependency injection** patterns:
+
+✅ **No global state** - Settings and database are injected via `Depends()`  
+✅ **Testable** - All dependencies can be overridden with `app.dependency_overrides`  
+✅ **Async-first** - Full async/await support with SQLAlchemy 2.0  
+✅ **Clean separation** - Infrastructure decoupled from business logic  
+
+### Key Files
+
+- `app/core/config.py` - Settings with `@lru_cache` (no global instances)
+- `app/core/database.py` - Pure functions: `build_engine()`, `build_session_maker()`
+- `app/api/deps.py` - Dependency injection functions: `get_settings_dep()`, `get_db()`
+- `app/main.py` - App startup with lifespan context manager (stores engine/sessionmaker in `app.state`)
+- `tests/conftest.py` - Test fixtures with `app.dependency_overrides`
+
+---
+
 ## Quick Start
 
 ### Prerequisites
@@ -14,25 +33,18 @@ Backend API for automatic extraction of logistics data from PDFs and images usin
 - PostgreSQL 16+
 - OpenAI API Key
 
-### Setup
+### Installation
 
 ```bash
-# Clone and install
-git clone <repo>
 cd logisparse
-
-# Using setup script (recommended)
-python setup.py
-
-# Or manually
 python -m venv .venv
 source .venv/bin/activate          # On Windows: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ### Environment Variables
 
-Create `.env` file:
+Create `.env`:
 
 ```env
 DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/logisparse_db
@@ -43,7 +55,7 @@ OPENAI_API_KEY=sk-...
 ### Running
 
 ```bash
-# Start development server
+# Development server (auto-reload)
 uvicorn app.main:app --reload
 
 # Run tests
@@ -54,14 +66,6 @@ black app/
 
 # Check types
 mypy app/
-```
-
-### With Docker
-
-```bash
-docker-compose up -d
-# API runs on http://localhost:8000
-# Database: postgres://logisparse_user@localhost:5432/logisparse_db
 ```
 
 ---
@@ -79,6 +83,117 @@ docker-compose up -d
 
 ### Health
 - `GET /health` - Health check
+- `GET /ready` - Readiness check
+- `GET /` - Root info
+
+---
+
+## Dependency Injection Pattern
+
+### How It Works
+
+**1. Settings (no global state)**
+```python
+# In api/deps.py
+def get_settings_dep() -> Settings:
+    return get_settings()  # @lru_cache cached, pure function
+
+# Usage in endpoint
+@router.get("/config")
+async def show_config(
+    settings: Annotated[Settings, Depends(get_settings_dep)]
+) -> dict:
+    return {"version": settings.APP_VERSION}
+```
+
+**2. Database (dependency injection)**
+```python
+# In api/deps.py
+async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
+    session_maker = request.app.state.session_maker
+    async with session_maker() as session:
+        yield session
+
+# Usage in endpoint
+@router.get("/documents")
+async def list_documents(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)]
+) -> list:
+    documents = await get_user_documents(db, current_user.id)
+    return documents
+```
+
+**3. Application Startup (lifespan)**
+```python
+# In main.py
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    engine = build_engine(settings)
+    session_maker = build_session_maker(engine)
+    app.state.engine = engine
+    app.state.session_maker = session_maker
+    
+    yield
+    
+    # Shutdown
+    await engine.dispose()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+---
+
+## Testing with Isolation
+
+**conftest.py** demonstrates proper test isolation:
+
+```python
+@pytest.fixture
+def test_settings() -> Settings:
+    """Fake settings for testing"""
+    return Settings(DATABASE_URL="sqlite+aiosqlite:///:memory:", ...)
+
+@pytest.fixture
+def override_get_db(db_session):
+    """Override get_db with in-memory SQLite"""
+    app.dependency_overrides[get_db] = lambda: (yield db_session)
+    yield
+    app.dependency_overrides.clear()
+
+@pytest.fixture
+def override_get_settings(test_settings):
+    """Override get_settings_dep with test settings"""
+    app.dependency_overrides[get_settings_dep] = lambda: test_settings
+    yield
+    app.dependency_overrides.clear()
+
+@pytest.fixture
+def client(override_get_db, override_get_settings):
+    """Test client with all overrides active"""
+    return TestClient(app)
+```
+
+**Test example:**
+```python
+def test_health_endpoint(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+```
+
+---
+
+## Why This Architecture?
+
+| Problem | Solution |
+|---------|----------|
+| Import-time side effects | Settings are functions, not globals |
+| Circular dependencies | Dependencies injected at request time |
+| Pytest failures | All dependencies can be mocked |
+| Hard to test | Pure functions + dependency overrides |
+| Database coupling | DB accessed only via `get_db()` dependency |
 
 ---
 
@@ -86,30 +201,23 @@ docker-compose up -d
 
 ```
 app/
-├── api/v1/          # HTTP routes (auth, documents)
-├── core/            # Configuration, database, security
-├── models/          # SQLAlchemy ORM (users, documents)
-├── schemas/         # Pydantic validation (input/output)
-├── crud/            # Database operations
-└── services/        # Business logic (AI extraction)
+├── api/v1/              # HTTP routes (auth, documents)
+│   └── deps.py          # Dependency injection functions
+├── core/                # Configuration and infrastructure
+│   ├── config.py        # Settings (@lru_cache)
+│   ├── database.py      # Engine/sessionmaker builders
+│   ├── security.py      # JWT, password hashing
+│   └── middleware.py    # Request processing
+├── crud/                # Database operations
+├── models/              # SQLAlchemy ORM
+├── schemas/             # Pydantic validation
+└── services/            # Business logic (AI extraction)
 
 tests/
-├── unit/            # Security, validation, CRUD tests
-└── integration/     # API endpoint tests
+├── conftest.py          # Test fixtures and overrides
+├── unit/                # Unit tests (schemas, security, etc)
+└── integration/         # API endpoint tests
 ```
-
----
-
-## Features
-
-✅ JWT authentication with bcrypt  
-✅ Multi-file upload (PDF, PNG, JPG)  
-✅ AI-powered data extraction (OpenAI gpt-4o-mini)  
-✅ Structured outputs with Pydantic validation  
-✅ Async everything (FastAPI + SQLAlchemy)  
-✅ Request tracking via X-Request-ID header  
-✅ Rate limiting and CORS configured  
-✅ Comprehensive test coverage  
 
 ---
 
@@ -138,8 +246,6 @@ tests/
 
 ## Extracted Data Schema
 
-When a document is successfully processed, the `extracted_data` field contains:
-
 ```json
 {
   "origen": "Puerto Montt",
@@ -148,6 +254,51 @@ When a document is successfully processed, the `extracted_data` field contains:
   "fecha_despacho": "2026-05-29",
   "items": [
     {"sku": "SALMON-001", "cantidad": 100}
+  ]
+}
+```
+
+---
+
+## Running with Docker
+
+```bash
+docker-compose up -d
+# API: http://localhost:8000
+# Database: postgres://logisparse_user@localhost:5432/logisparse_db
+```
+
+---
+
+## Key Features
+
+✅ JWT authentication with Argon2  
+✅ Multi-file upload (PDF, PNG, JPG)  
+✅ AI-powered data extraction (OpenAI gpt-4o-mini)  
+✅ Structured outputs with Pydantic validation  
+✅ Async everything (FastAPI + SQLAlchemy)  
+✅ Request tracking via X-Request-ID header  
+✅ Rate limiting and CORS configured  
+✅ Dependency Injection testing  
+✅ Complete type safety with Annotated types  
+
+---
+
+## Development
+
+```bash
+# Format
+black app/ tests/
+
+# Type check
+mypy app/
+
+# Lint
+pylint app/
+
+# Test
+pytest tests/ -v
+```
   ]
 }
 ```

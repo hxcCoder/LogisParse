@@ -6,8 +6,10 @@ All external processing (OCR / AI) is mocked to ensure deterministic tests.
 """
 
 from fastapi.testclient import TestClient
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 import pytest
+
+from app.schemas.extraction import ExtractedLogisticsData
 
 
 # ─────────────────────────────────────────────────────────────
@@ -18,16 +20,16 @@ import pytest
 def mock_document_extractor():
     """Avoid OCR + OpenAI calls in integration tests."""
     with patch("app.api.v1.documents.extract_document") as mock:
-        mock.return_value = {
-            "origen": "Puerto Montt",
-            "destino": "Santiago",
-            "patente_camion": "ABCD12",
-            "chofer": "Juan Perez",
-            "fecha_despacho": "2026-01-01",
-            "numero_guia": "12345",
-            "items": [],
-            "observaciones": None,
-        }
+        mock.return_value = ExtractedLogisticsData(
+            origen="Puerto Montt",
+            destino="Santiago",
+            patente_camion="ABCD12",
+            chofer="Juan Perez",
+            fecha_despacho="2026-01-01",
+            numero_guia="12345",
+            items=[],
+            observaciones=None,
+        )
         yield mock
 
 
@@ -137,7 +139,8 @@ def test_upload_valid_pdf(client: TestClient) -> None:
     body = _upload_pdf(client, token)
     assert body["filename"] == "guide.pdf"
     assert body["content_type"] == "application/pdf"
-    assert body["status"] == "PROCESSING"
+    assert body["status"] == "EXTRACTED"
+    assert body["extracted_data"]["origen"] == "Puerto Montt"
     assert "id" in body
     assert "created_at" in body
 

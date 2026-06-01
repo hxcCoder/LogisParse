@@ -6,8 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.v1 import auth, documents
+from app.api.deps import get_settings_dep
 from app.core.config import get_settings
-from app.core.database import close_db, init_db
+from app.core.database import build_engine, build_session_maker
 from app.core.logging import configure_logging
 from app.core.middleware import (
     InMemoryRateLimitMiddleware,
@@ -18,16 +19,48 @@ logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
-    settings = get_settings()  
-
+    """Create and configure FastAPI application.
+    
+    The app is created with a proper lifespan context that:
+    - Initializes database engine and session factory on startup
+    - Stores them in app.state for dependency injection
+    - Properly disposes resources on shutdown
+    """
+    # Load settings once during app creation
+    settings = get_settings()
+    
     configure_logging(settings.LOG_LEVEL)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        """Manage application lifecycle.
+        
+        Startup:
+        - Create database engine
+        - Create session factory
+        - Store in app.state for dependency injection
+        
+        Shutdown:
+        - Dispose database engine
+        - Clean up resources
+        """
         logger.info("Starting %s %s", settings.APP_TITLE, settings.APP_VERSION)
-        await init_db()
+        
+        # Initialize database during startup
+        engine = build_engine(settings)
+        session_maker = build_session_maker(engine)
+        
+        # Store in app.state for dependency injection
+        app.state.engine = engine
+        app.state.session_maker = session_maker
+        
+        logger.info("Database initialized: %s", settings.DATABASE_URL)
+        
         yield
-        await close_db()
+        
+        # Cleanup on shutdown
+        logger.info("Shutting down application")
+        await engine.dispose()
         logger.info("Application shutdown complete")
 
     app = FastAPI(
@@ -40,6 +73,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Add middleware
     app.add_middleware(InMemoryRateLimitMiddleware)
     app.add_middleware(RequestContextMiddleware)
 
@@ -51,9 +85,11 @@ def create_app() -> FastAPI:
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
     )
 
+    # Include routers
     app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
     app.include_router(documents.router, prefix="/api/v1/documents", tags=["documents"])
 
+    # Global exception handler
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
         logger.exception("Unhandled error %s %s", request.method, request.url.path)
@@ -62,6 +98,7 @@ def create_app() -> FastAPI:
             content={"detail": "Internal server error"},
         )
 
+    # Health check endpoints
     @app.get("/health")
     async def health():
         return {"status": "ok", "version": settings.APP_VERSION}

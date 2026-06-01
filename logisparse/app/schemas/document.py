@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.document import DocumentStatus
 
@@ -11,9 +11,9 @@ class DocumentResponse(BaseModel):
 
     id: str
     filename: str
-    content_type: str | None
+    content_type: str | None = None
     status: DocumentStatus
-    extracted_data: dict[str, Any] | None
-    error_logs: str | None
-    created_at: datetime
-    updated_at: datetime
+    extracted_data: dict[str, Any] | None = None
+    error_logs: str | None = None
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)

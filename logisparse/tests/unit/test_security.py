@@ -15,8 +15,16 @@ def test_password_hash_roundtrip() -> None:
 
 def test_jwt_roundtrip() -> None:
     """Test JWT token creation and decoding."""
-    token = create_access_token({"sub": "user-123"}, expires_delta=timedelta(minutes=5))
-    payload = decode_token(token)
+    secret_key = "test-secret-key-at-least-32-chars-long-!!"
+    algorithm = "HS256"
+    
+    token = create_access_token(
+        {"sub": "user-123"},
+        secret_key=secret_key,
+        algorithm=algorithm,
+        expires_delta=timedelta(minutes=5)
+    )
+    payload = decode_token(token, secret_key, algorithm)
 
     assert payload is not None
     assert payload["sub"] == "user-123"

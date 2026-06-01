@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 class LogisticsItem(BaseModel):
     sku: str | None = Field(default=None, description="Internal or supplier SKU when present")
-    descripcion: str = Field(description="Product or cargo description")
+    descripcion: str | None = Field(default=None, description="Product or cargo description")
     cantidad: int = Field(ge=0, description="Quantity detected in the document")
     unidad: str | None = Field(default=None, description="Unit of measure")
 

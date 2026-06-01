@@ -8,21 +8,21 @@ def main() -> None:
     """Setup development environment."""
     root = Path(__file__).parent
     
-    print("🚀 Setting up LogisParse development environment...")
+    print("Setting up LogisParse development environment...")
     
     # Create virtualenv if it doesn't exist
     venv_path = root / ".venv"
     if not venv_path.exists():
-        print("📦 Creating virtual environment...")
+        print("Creating virtual environment...")
         subprocess.run([sys.executable, "-m", "venv", ".venv"], cwd=root, check=True)
     
     # Activate and install
     pip = venv_path / ("Scripts/pip" if sys.platform == "win32" else "bin/pip")
-    print("📥 Installing dependencies...")
+    print("Installing dependencies...")
     subprocess.run([str(pip), "install", "-q", "-r", "requirements.txt"], cwd=root, check=True)
     
-    print("✅ Setup complete!")
-    print("\n📖 Next steps:")
+    print("Setup complete!")
+    print("\nNext steps:")
     print("  1. Activate virtual environment:")
     if sys.platform == "win32":
         print("     .venv\\Scripts\\Activate.ps1")

@@ -73,9 +73,9 @@ _RE_PATENTE = re.compile(r"\b([A-Z]{2,4}\d{2,4})\b", re.IGNORECASE)
 _RE_RUT = re.compile(r"\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b")
 _RE_GUIA = re.compile(r"(?:gu[ií]a|folio|nro)\s*[:#]?\s*(\d{4,10})", re.I)
 _RE_FECHA = re.compile(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b")
-_RE_ORIGEN = re.compile(r"origen[:\s]+([A-Za-záéíóúñ\s]{3,40})", re.I)
-_RE_DESTINO = re.compile(r"destino[:\s]+([A-Za-záéíóúñ\s]{3,40})", re.I)
-_RE_CHOFER = re.compile(r"(?:chofer|conductor)[:\s]+([A-Za-záéíóúñ\s]{3,50})", re.I)
+_RE_ORIGEN = re.compile(r"origen\s*:\s*([A-Za-záéíóúñ]+(?:[ ]+[A-Za-záéíóúñ]+)*)", re.I)
+_RE_DESTINO = re.compile(r"destino\s*:\s*([A-Za-záéíóúñ]+(?:[ ]+[A-Za-záéíóúñ]+)*)", re.I)
+_RE_CHOFER = re.compile(r"(?:chofer|conductor)\s*:\s*([A-Za-záéíóúñ]+(?:[ ]+[A-Za-záéíóúñ]+)*)", re.I)
 
 _RE_ITEM = re.compile(
     r"(\d+(?:[.,]\d+)?)\s*(kg|caja|cajas|un|unid|lts?)?\s+([A-Za-záéíóúñ\s]{3,50})",
@@ -186,12 +186,9 @@ def to_schema(r: RegexResult) -> ExtractedLogisticsData:
 # AI FALLBACK (FIXED TYPES)
 # ─────────────────────────────────────────────────────────────
 
-async def ai_complete(text: str, r: RegexResult, missing: list[str]) -> ExtractedLogisticsData:
+async def ai_complete(text: str, r: RegexResult, missing: list[str], settings) -> ExtractedLogisticsData:
+    """Complete extraction using OpenAI API for missing fields."""
     from openai import AsyncOpenAI
-
-    from app.core.config import get_settings
-
-    settings = get_settings()  
 
     if not settings.OPENAI_API_KEY:
         return to_schema(r)
@@ -240,7 +237,7 @@ async def ai_complete(text: str, r: RegexResult, missing: list[str]) -> Extracte
 AI_THRESHOLD = 0.7
 
 
-async def extract_document(file_bytes: bytes, filename: str, content_type: str) -> ExtractedLogisticsData:
+async def extract_document(file_bytes: bytes, filename: str, content_type: str, settings) -> ExtractedLogisticsData:
     if len(file_bytes) < 20:
         raise ValueError("file too small")
 
@@ -259,4 +256,4 @@ async def extract_document(file_bytes: bytes, filename: str, content_type: str) 
     if r.confidence >= AI_THRESHOLD:
         return to_schema(r)
 
-    return await ai_complete(text, r, missing)
+    return await ai_complete(text, r, missing, settings)

@@ -5,6 +5,7 @@ Simple linear flow with minimal abstraction.
 """
 
 import logging
+from typing import Annotated
 
 from fastapi import (
     APIRouter,
@@ -17,8 +18,8 @@ from fastapi import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
-from app.core.database import get_db
+from app.api.deps import get_current_user, get_db, get_settings_dep
+from app.core.config import Settings
 from app.core.exceptions import DocumentNotFound
 from app.crud.crud_document import (
     create_document,
@@ -46,6 +47,7 @@ async def upload_document(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    settings: Annotated[Settings, Depends(get_settings_dep)] = None,
 ) -> DocumentResponse:
     filename, content_type, file_content = await read_and_validate_upload(file)
 
@@ -70,6 +72,7 @@ async def upload_document(
             file_bytes=file_content,
             filename=filename,
             content_type=content_type,
+            settings=settings,
         )
 
     except ValueError as exc:
