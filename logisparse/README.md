@@ -1,5 +1,8 @@
 # LogisParse
 
+[![CI](https://github.com/hxcCoder/LogisParse/actions/workflows/ci.yml/badge.svg)](https://github.com/hxcCoder/LogisParse/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/hxcCoder/LogisParse/branch/main/graph/badge.svg)](https://codecov.io/gh/hxcCoder/LogisParse)
+
 Backend FastAPI para automatizar la lectura de documentos logisticos: recibe PDFs o imagenes, valida el archivo, extrae datos de despacho y guarda el resultado estructurado por usuario.
 
 El proyecto esta pensado como un monolito modular: simple de ejecutar, facil de testear y con dependencias explicitas.

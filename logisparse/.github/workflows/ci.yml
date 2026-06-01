@@ -32,7 +32,7 @@ jobs:
 
       - name: Test with coverage
         env:
-          DATABASE_URL: sqlite+aiosqlite:///:memory:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           SECRET_KEY: ci-secret-key-with-enough-length
           OPENAI_API_KEY: ""
         run: pytest -q --cov=app --cov-branch --cov-report=xml
