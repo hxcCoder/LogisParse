@@ -176,6 +176,44 @@ def test_upload_valid_jpeg(client: TestClient) -> None:
     assert response.json()["content_type"] == "image/jpeg"
 
 
+def test_upload_marks_failed_on_validation_error(
+    client: TestClient,
+    mock_document_extractor,
+) -> None:
+    mock_document_extractor.side_effect = ValueError("bad document")
+    token = _register_and_login(client, "extract-value-error@example.com")
+
+    response = client.post(
+        "/api/v1/documents/upload",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": ("guide.pdf", b"%PDF-1.7 fake content", "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "FAILED"
+    assert body["error_logs"] == "bad document"
+
+
+def test_upload_marks_failed_on_unexpected_extraction_error(
+    client: TestClient,
+    mock_document_extractor,
+) -> None:
+    mock_document_extractor.side_effect = RuntimeError("boom")
+    token = _register_and_login(client, "extract-runtime-error@example.com")
+
+    response = client.post(
+        "/api/v1/documents/upload",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": ("guide.pdf", b"%PDF-1.7 fake content", "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "FAILED"
+    assert body["error_logs"] == "Extraction failed unexpectedly"
+
+
 def test_upload_rejects_extension_content_mismatch(client: TestClient) -> None:
     token = _register_and_login(client, "mismatch@example.com")
     response = client.post(
