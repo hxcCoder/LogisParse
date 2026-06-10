@@ -1,170 +1,164 @@
-# LogisParse - Arquitectura Visual
+# LogisParse - Diagnostico y Arquitectura
 
-Este documento explica como se mueve una request por el sistema y donde vive cada responsabilidad. No describe features futuras: refleja el codigo actual.
+## Diagnostico Honesto
 
-## 1. Mapa del Sistema
+El proyecto no necesita microservicios, CQRS, event sourcing ni DDD ceremonial.
+El problema real es operativo: leer documentos tributarios/logisticos chilenos,
+extraer campos, detectar inconsistencias y dejar una revision humana rapida.
+
+La arquitectura correcta para este momento es un monolito modular:
+
+- FastAPI para API y demo.
+- SQLAlchemy async para persistencia.
+- Servicios concretos para validacion y extraccion.
+- IA como verificador parcial, no extractor principal.
+- Tests simples y ejecutables localmente.
+
+Lo que sobraba o hacia ruido:
+
+- Mensaje de producto demasiado generico tipo SaaS logistico.
+- Documentacion duplicada de arquitectura.
+- Script `extractor.py` para empaquetar archivos hacia otra herramienta.
+- Comentarios visuales con caracteres corruptos.
+- Fallback IA que antes podia mandar una ventana grande de texto sin seleccionar
+  fragmentos por campo faltante.
+
+## Arquitectura Objetivo
 
 ```mermaid
 flowchart TB
-    subgraph Edge["Entrada HTTP"]
-        Client["Cliente"]
-        Middleware["Request ID, rate limit, CORS"]
-        Routers["Routers FastAPI"]
+    subgraph Frontend["Frontend"]
+        UI["Next.js operator console"]
     end
 
-    subgraph App["Aplicacion"]
-        Deps["api/deps.py<br/>settings, db, current_user"]
-        Auth["auth.py<br/>register, login"]
-        Documents["documents.py<br/>upload, list, get"]
-        Services["services/<br/>upload validation, extractor"]
-        Crud["crud/<br/>user, document"]
+    subgraph API["FastAPI monolith"]
+        Auth["Auth JWT"]
+        Docs["Documents routes"]
+        Deps["Explicit dependencies"]
     end
 
-    subgraph Data["Datos"]
-        Models["models/<br/>User, Document"]
-        DB[("Database")]
+    subgraph Domain["Focused services"]
+        Validation["Upload validation"]
+        Extractor["Hybrid extractor"]
+        Context["AI context builder"]
     end
 
-    Client --> Middleware --> Routers
-    Routers --> Auth
-    Routers --> Documents
-    Routers -. Depends .-> Deps
+    subgraph Persistence["Persistence"]
+        Crud["SQLAlchemy CRUD"]
+        Models["User / Document"]
+        DB[("PostgreSQL")]
+    end
+
+    UI --> Auth
+    UI --> Docs
+    Docs --> Deps
+    Docs --> Validation
+    Docs --> Extractor
+    Extractor --> Context
     Auth --> Crud
-    Documents --> Services
-    Documents --> Crud
+    Docs --> Crud
     Crud --> Models --> DB
 ```
 
-## 2. Dependency Injection
-
-La app no crea sesiones de base de datos dentro de los handlers. El `lifespan` inicializa engine y session maker; cada request recibe sus dependencias con `Depends()`.
+## Pipeline Preciso
 
 ```mermaid
-flowchart LR
-    Startup["create_app lifespan"] --> Engine["build_engine(settings)"]
-    Engine --> SessionMaker["build_session_maker(engine)"]
-    SessionMaker --> State["app.state.session_maker"]
+sequenceDiagram
+    participant O as Operador
+    participant API as FastAPI
+    participant V as Validador
+    participant X as Extractor
+    participant R as Regex
+    participant C as Contexto IA
+    participant AI as OpenAI
+    participant DB as PostgreSQL
 
-    Request["HTTP request"] --> Handler["Route handler"]
-    Handler -.-> GetDB["get_db(request)"]
-    GetDB --> State
-    GetDB --> Session["AsyncSession per request"]
-
-    Handler -.-> GetSettings["get_settings_dep()"]
-    GetSettings --> Settings["Settings cached"]
-
-    Handler -.-> CurrentUser["get_current_user()"]
-    CurrentUser --> Token["decode JWT"]
-    CurrentUser --> Session
+    O->>API: POST /documents/upload
+    API->>V: Validar extension, firma y peso
+    V-->>API: bytes seguros
+    API->>DB: PENDING -> PROCESSING
+    API->>X: extract_document
+    X->>X: Extraer texto local
+    X->>R: Parsear campos
+    alt Regex completo o confianza suficiente
+        R-->>X: Datos estructurados
+    else Campos faltantes
+        X->>C: Seleccionar lineas relevantes
+        C->>AI: Solo fragmentos + campos faltantes
+        AI-->>X: Correcciones parciales
+    end
+    X-->>API: ExtractedLogisticsData
+    API->>DB: EXTRACTED o FAILED
+    API-->>O: Resultado revisable
 ```
 
-## 3. Upload y Extraccion
+## Responsabilidades Finales
 
-```mermaid
-flowchart TD
-    A["POST /documents/upload"] --> B["JWT: get_current_user"]
-    B --> C["read_and_validate_upload"]
-    C --> D{"Archivo valido?"}
-    D -- "No" --> E["HTTP 400 / 413"]
-    D -- "Si" --> F["create_document<br/>PENDING"]
-    F --> G["update_status<br/>PROCESSING"]
-    G --> H["extract_document"]
-    H --> I{"Extraccion OK?"}
-    I -- "Si" --> J["update_status<br/>EXTRACTED + JSON"]
-    I -- "Error controlado" --> K["update_status<br/>FAILED + error_logs"]
-    I -- "Error inesperado" --> L["update_status<br/>FAILED + mensaje generico"]
-    J --> M["DocumentResponse"]
-    K --> M
-    L --> M
-```
-
-## 4. Pipeline del Extractor
-
-```mermaid
-flowchart LR
-    File["PDF / PNG / JPG"] --> Text["extract_text"]
-    Text --> Source{"Tipo"}
-    Source -- "PDF" --> PDF["pdfplumber"]
-    Source -- "Imagen" --> OCR["Tesseract OCR"]
-    PDF --> Regex["run_regex"]
-    OCR --> Regex
-    Regex --> Confidence{"Campos faltantes<br/>o baja confianza?"}
-    Confidence -- "No" --> Schema["to_schema"]
-    Confidence -- "Si" --> AI["OpenAI Structured Outputs"]
-    AI --> Merge["Merge<br/>regex tiene prioridad"]
-    Merge --> Result["ExtractedLogisticsData"]
-    Schema --> Result
-```
-
-## 5. Estados del Documento
-
-```mermaid
-stateDiagram-v2
-    [*] --> PENDING: create_document
-    PENDING --> PROCESSING: upload validado
-    PROCESSING --> EXTRACTED: extraccion exitosa
-    PROCESSING --> FAILED: archivo invalido para extraer
-    PROCESSING --> FAILED: error inesperado
-    EXTRACTED --> [*]
-    FAILED --> [*]
-```
-
-## 6. Modelo de Datos
-
-```mermaid
-erDiagram
-    USERS ||--o{ DOCUMENTS : owns
-
-    USERS {
-        string id PK
-        string email UK
-        string hashed_password
-        string full_name
-        boolean is_active
-        datetime created_at
-        datetime updated_at
-    }
-
-    DOCUMENTS {
-        string id PK
-        string user_id FK
-        string filename
-        string content_type
-        enum status
-        json extracted_data
-        text error_logs
-        datetime created_at
-        datetime updated_at
-    }
-```
-
-## 7. Arquitectura de Tests
-
-```mermaid
-flowchart LR
-    Tests["pytest"] --> Overrides["app.dependency_overrides"]
-    Overrides --> TestSettings["Settings de test"]
-    Overrides --> TestDB["SQLite in-memory"]
-    TestDB --> Client["TestClient"]
-    TestSettings --> Client
-    Client --> API["Handlers reales"]
-    API --> Assertions["Assertions unit/integration"]
-```
-
-## Lectura Arquitectonica
-
-| Decision | Valor |
+| Modulo | Responsabilidad |
 | --- | --- |
-| Monolito modular | Menos piezas operacionales, mas claridad para el concurso |
-| DI explicita | Handlers testeables y sin sesiones globales |
-| Extractor hibrido | Regex rapido primero, AI solo para completar |
-| Estados persistidos | Trazabilidad de cada documento |
-| Tests con overrides | Misma API, infraestructura reemplazable |
+| `api/v1/auth.py` | Registro y login |
+| `api/v1/documents.py` | Flujo lineal de documento |
+| `api/deps.py` | Settings, DB session y usuario actual |
+| `services/upload_validation.py` | Validar nombre, bytes, extension y tamano |
+| `services/document_extractor.py` | Texto local, regex, contexto IA y merge |
+| `crud/` | Queries SQLAlchemy concretas |
+| `models/` | Tablas persistidas |
+| `schemas/` | Contratos HTTP y extraccion |
+| `frontend/` | Consola Next.js conectable |
 
-## Observaciones Reales
+## Refactors Concretos Realizados
 
-| Punto | Lectura |
-| --- | --- |
-| `upload_validation.py` usa `settings` directo | Funciona, pero no sigue al 100% el patron DI usado por los routers |
-| Rate limit en memoria | Correcto para una instancia; en despliegue multi-replica requeriria almacenamiento compartido |
-| AI fallback por umbral | Si regex supera el umbral, campos faltantes pueden quedar vacios por decision del pipeline |
+- Fallback IA ahora usa `build_ai_context()` y limita contexto a fragmentos.
+- Tests subidos a 92% de cobertura.
+- Tests directos cubren rutas y dependencias sin depender del hilo de `TestClient`.
+- README reescrito con foco SII/logistica chilena.
+- Guia frontend agregada.
+- Frontend Next.js + Tailwind scaffolded.
+- `extractor.py` eliminado.
+- Documentacion de arquitectura duplicada eliminada.
+
+## Que Eliminaria Ya
+
+Ya eliminado:
+
+- `extractor.py`, porque era un script utilitario externo al producto.
+- `docs/ARCHITECTURE.md`, porque duplicaba la fuente de verdad.
+
+Mantendria por ahora:
+
+- `crud/`, porque es pequeno y claro.
+- `core/middleware.py`, porque request-id y rate-limit ayudan en demo.
+- `migrations/`, porque el esquema debe ser reproducible.
+
+## Hoy vs v2
+
+Hoy:
+
+- Subir documento.
+- Validar archivo.
+- Extraer campos.
+- Guardar estado.
+- Revisar resultado.
+- Mostrar consola frontend conectable.
+
+v2:
+
+- Endpoint formal de aprobacion/correccion humana.
+- Historial por campo corregido.
+- Validaciones SII por tipo de documento.
+- Exportacion operacional.
+- Almacenamiento seguro de documentos originales.
+- Rate limit externo si hay multiples replicas.
+
+## Nivel Concurso Ganador
+
+La demostracion debe ser breve y concreta:
+
+1. Subir una guia o PDF de ejemplo.
+2. Mostrar que regex extrae campos sin IA cuando puede.
+3. Mostrar que la IA recibe solo fragmentos en casos incompletos.
+4. Mostrar estado persistido y resultado revisable.
+5. Explicar que el humano decide el cierre, no el modelo.
+
+La tesis tecnica es fuerte porque no vende magia: combina reglas locales,
+IA acotada y trazabilidad para reducir trabajo manual real.

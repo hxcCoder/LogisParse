@@ -1,205 +1,187 @@
-# 🧭 Northstar: LogisParse B2B SaaS
+# NORTHSTAR — LogisParse
 
-## Visión General de la Arquitectura
+## Vision
 
-**Objetivo:** MVP funcional para la automatización documental logística (Guías de Despacho, Tarjas) mediante extracción por IA, orientado a resolver cuellos de botella en operaciones navieras/salmoneras.
+LogisParse is not an “AI that reads PDFs”.
 
-**Stack Tecnológico Base:**
-- **Backend:** Python 3.12, FastAPI
-- **Base de Datos:** PostgreSQL 16 (vía `asyncpg`)
-- **ORM:** SQLAlchemy 2.0 (100% Asíncrono) + Alembic para migraciones
-- **Validación:** Pydantic V2
-- **IA:** OpenAI (gpt-4o-mini) con *Structured Outputs*
-- **Autenticación:** JWT (JSON Web Tokens) + Bcrypt
-- **Despliegue:** Docker + Docker Compose
+It is an operational assistant for logistics document workflows.
 
----
+The goal is to reduce repetitive manual work in transport and logistics operations by transforming unstructured documents into organized, validated and reviewable operational data.
 
-## 📂 1. Estructura de Directorios (Clean Architecture)
+The system is designed around one principle:
 
-Crea esta estructura exacta antes de escribir la primera línea de lógica de negocio.
-
-```bash
-logisparse/
-├── .env
-├── docker-compose.yml
-├── Dockerfile
-├── requirements.txt
-├── alembic.ini
-└── app/
-    ├── __init__.py
-    ├── main.py
-    ├── core/                          # Configuraciones globales y seguridad
-    │   ├── config.py                  # Pydantic BaseSettings
-    │   ├── security.py                # Hashing (bcrypt) y JWT
-    │   ├── database.py                # AsyncEngine y AsyncSession
-    │   └── exceptions.py              # Custom HTTP Exceptions
-    ├── models/                        # SQLAlchemy Base Models (Schema DB)
-    │   ├── __init__.py
-    │   ├── base.py
-    │   ├── user.py
-    │   └── document.py
-    ├── schemas/                       # Pydantic Models (Validación I/O)
-    │   ├── __init__.py
-    │   ├── token.py
-    │   ├── user.py
-    │   ├── document.py                # Schema estricto para OpenAI Structured Outputs
-    │   └── extraction.py
-    ├── crud/                          # Data Access Layer (Repositories)
-    │   ├── __init__.py
-    │   ├── crud_user.py
-    │   └── crud_document.py
-    ├── api/                           # Controladores / Routers FastAPI
-    │   ├── deps.py                    # Dependencias (get_db, get_current_user)
-    │   └── v1/
-    │       ├── auth.py
-    │       ├── documents.py
-    │       └── webhooks.py
-    └── services/                      # Lógica de Negocio Pura
-        ├── __init__.py
-        ├── email_ingestion.py         # imaplib logic
-        └── ai_extractor.py            # OpenAI client config
-```
+> Humans keep final control.  
+> The system removes repetitive friction.
 
 ---
 
-## 🗄️ 2. Diseño de Base de Datos (Schema)
+# Core Philosophy
 
-Debes definir estos modelos en `app/models/`.
+## Human-in-the-loop First
 
-### Tabla: `users`
-- `id` (UUID, Primary Key)
-- `email` (String, Unique, Index)
-- `hashed_password` (String)
-- `is_active` (Boolean, default=True)
-- `created_at` (DateTime, UTC)
+The operator is never removed from the workflow.
 
-### Tabla: `documents`
-- `id` (UUID, Primary Key)
-- `filename` (String)
-- `status` (Enum: PENDING, PROCESSING, EXTRACTED, FAILED)
-- `uploaded_at` (DateTime, UTC)
-- `extracted_data` (JSONB) → *Aquí guardaremos la respuesta de la IA*
-- `error_logs` (Text, nullable)
-- `user_id` (UUID, Foreign Key a `users`) → *Traza qué usuario/tenant subió el archivo*
+Instead, LogisParse:
+- pre-processes documents,
+- extracts operational fields,
+- organizes the workflow,
+- detects inconsistencies,
+- and prepares data for rapid human validation.
 
----
+The human approves the final result.
 
-## ⚙️ 3. Core Workflow: Pipeline de Extracción (Pseudocódigo Master)
-
-Esta es la lógica que debe residir en `app/services/ai_extractor.py`.
-
-1. **Recepción:** El endpoint de webhook o la función IMAP recibe un PDF en bytes.
-
-2. **Codificación:** Convertir el PDF a formato Base64.
-
-3. **Definición de Schema (Pydantic):**
-```python
-class ExtractedLogisticsData(BaseModel):
-    origen: str
-    destino: str
-    patente_camion: Optional[str]
-    fecha_despacho: str
-    items: list[dict]  # ej: [{"sku": "001", "cantidad": 100}]
-```
-
-4. **Llamada a OpenAI (Structured Outputs):**
-```python
-response = await client.beta.chat.completions.parse(
-    model="gpt-4o-mini",
-    messages=[
-        {"role": "system", "content": "Eres un asistente de logística experto. Extrae los datos de la Guía de Despacho adjunta."},
-        {"role": "user", "content": [
-            {"type": "text", "text": "Procesa el siguiente documento PDF:"},
-            {"type": "image_url", "image_url": {"url": f"data:application/pdf;base64,{base64_pdf}"}}
-        ]}
-    ],
-    response_format=ExtractedLogisticsData,
-)
-```
-
-5. **Persistencia:** Guardar el modelo validado como JSON en `documents.extracted_data` usando SQLAlchemy asíncrono y marcar `status = 'EXTRACTED'`.
+This creates:
+- operational trust,
+- auditability,
+- lower risk,
+- easier adoption inside companies.
 
 ---
 
-## 🐳 4. Infraestructura Base (`docker-compose.yml`)
+# Product Identity
 
-Este es tu motor. Levántalo con `docker-compose up --build`.
+LogisParse is:
 
-```yaml
-version: '3.8'
+- a document workflow assistant,
+- a logistics extraction engine,
+- a validation dashboard,
+- and a semi-automated operational system.
 
-services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: logisparse_user
-      POSTGRES_PASSWORD: secretpassword
-      POSTGRES_DB: logisparse_db
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-  api:
-    build: .
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - .:/app
-    ports:
-      - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://logisparse_user:secretpassword@db:5432/logisparse_db
-      - SECRET_KEY=CAMBIAR_EN_PRODUCCION
-      - OPENAI_API_KEY=tu_api_key_aqui
-    depends_on:
-      - db
-
-volumes:
-  postgres_data:
-```
+It is NOT:
+- a “magic AI”,
+- a fully autonomous replacement,
+- or a black-box automation platform.
 
 ---
 
-## ✅ 5. Checklist de Construcción (Fase por Fase)
+# Technical Direction
 
-Marca con una `[x]` a medida que avanzas. NO pases a la siguiente fase sin terminar la anterior.
+## Hybrid Extraction Model
 
-### Fase 1: Fundaciones y Base de Datos
-- [ ] Configurar `.env`, `Dockerfile` y `docker-compose.yml`
-- [ ] Levantar contenedores (`docker-compose up -d`)
-- [ ] Configurar `app/core/config.py` y conexión asíncrona en `app/core/database.py`
-- [ ] Crear modelos SQLAlchemy (`user.py`, `document.py`)
-- [ ] Inicializar Alembic (`alembic init -t async migrations`) y ejecutar primera migración
+The architecture prioritizes deterministic extraction first.
 
-### Fase 2: Autenticación y Usuarios
-- [ ] Implementar hashing en `app/core/security.py` (bcrypt)
-- [ ] Crear utilidades JWT (generar y decodificar tokens)
-- [ ] Construir el router `/api/v1/auth/login` (retorna token)
-- [ ] Crear dependencia `get_current_user` en `app/api/deps.py`
+Pipeline:
 
-### Fase 3: Ingesta Básica y API de Documentos
-- [ ] Crear router `/api/v1/documents/upload` (subida manual de PDF para pruebas)
-- [ ] Crear lógica CRUD para insertar documento en estado `PENDING`
-- [ ] Construir endpoint `/api/v1/documents` para listar historial
+1. File ingestion
+2. OCR / PDF text extraction
+3. Template detection
+4. Regex + rule-based extraction
+5. Data normalization
+6. AI-assisted validation/completion
+7. Human review
+8. Approval/export
 
-### Fase 4: Integración IA (El Core)
-- [ ] Instalar librería `openai`
-- [ ] Crear modelo Pydantic `ExtractedLogisticsData`
-- [ ] Implementar `app/services/ai_extractor.py` para llamar a la API y validar el JSON
-- [ ] Conectar la subida manual del PDF con la extracción y actualizar la DB
+The AI is intentionally positioned as:
+- a fallback,
+- a validator,
+- a confidence estimator,
+- and an ambiguity resolver.
 
-### Fase 5: Ingesta Automática (Opcional MVP)
-- [ ] Escribir script en `app/services/email_ingestion.py` usando `imaplib`
-- [ ] Configurar un background task de FastAPI (o script Cron) que revise la casilla cada 2 minutos
+Not as the core extraction engine.
 
 ---
 
-## 📝 6. Changelog / Registro de Decisiones Arquitectónicas (ADR)
+# Why This Matters
 
-*Usa esta sección para documentar CUALQUIER cambio sobre el stack o las reglas originales. Obligatorio llenar antes de modificar el código maestro.*
+This approach provides:
 
-| Fecha | Autor | Componente | Decisión / Modificación | Justificación |
-|:------|:------|:-----------|:------------------------|:--------------|
-| YYYY-MM-DD | hxcCoder | Infraestructura | Se definió Docker Compose base | Estandarización de entornos dev/prod |
-| [TBD] | | | | |
+## Lower Cost
+The AI operates on already-cleaned text instead of raw PDFs/images.
+
+This reduces:
+- token usage,
+- latency,
+- hallucinations,
+- and operational costs.
+
+---
+
+## Higher Reliability
+
+Each company can have:
+- custom templates,
+- custom extractors,
+- custom regex rules,
+- custom validations,
+- and custom workflows.
+
+This creates predictable operational behavior.
+
+---
+
+## Better Enterprise Adoption
+
+Companies do not need to:
+- redesign their PDFs,
+- retrain workers,
+- or trust fully autonomous AI decisions.
+
+LogisParse adapts to existing operational reality.
+
+---
+
+# Main Operational Goal
+
+Reduce logistics document processing time from:
+
+
+~5 minutes manual work
+↓
+~15–30 seconds assisted validation
+
+## The operator should mainly:
+
+review,
+correct edge cases,
+and approve.
+Long-Term Product Goal
+
+Become a configurable logistics document operations platform for SMEs and regional logistics companies.
+
+## Especially for:
+
+salmon industry logistics,
+transport operators,
+dispatch workflows,
+freight administration,
+and operational backoffices.
+Engineering Principles
+Keep the system simple
+
+## Avoid:
+
+premature microservices,
+unnecessary orchestration,
+distributed complexity,
+and infrastructure overengineering.
+
+## Prefer:
+
+modular monolith,
+explicit dependency injection,
+async-first backend,
+strong validation,
+typed schemas,
+and auditable workflows.
+Success Metric
+
+## The system succeeds if:
+
+operators trust it,
+validation time drops massively,
+document organization becomes centralized,
+operational errors decrease,
+and onboarding remains simple.
+
+Not if the AI is “impressive”.
+
+## Final Principle
+
+LogisParse is built to assist operations, not replace operational responsibility.
+
+## The product wins by combining:
+
+automation,
+operational structure,
+configurable extraction,
+and human verificatio

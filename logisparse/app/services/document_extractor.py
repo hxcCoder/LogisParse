@@ -1,10 +1,9 @@
-"""
-Hybrid document extractor for logistics documents.
+"""Hybrid extractor for Chilean logistics and tax documents.
 
-Pipeline:
-1. Text extraction (PDF OCR / image OCR)
-2. Regex extraction (fast deterministic layer)
-3. AI fallback (only missing fields)
+The pipeline is intentionally small:
+1. Extract text locally from PDF or image files.
+2. Parse deterministic fields with regex.
+3. Send only relevant fragments to AI when local parsing is incomplete.
 """
 
 import logging
@@ -18,9 +17,48 @@ from app.schemas.extraction import ExtractedLogisticsData, LogisticsItem
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────
-# TEXT EXTRACTION
-# ─────────────────────────────────────────────────────────────
+AI_THRESHOLD = 0.7
+AI_CONTEXT_CHAR_LIMIT = 1200
+AI_CONTEXT_FALLBACK_CHARS = 500
+
+FIELD_KEYWORDS = {
+    "origen": ("origen", "emisor", "sucursal", "desde"),
+    "destino": ("destino", "receptor", "entrega", "hasta"),
+    "patente": ("patente", "placa", "camion", "vehiculo"),
+    "chofer": ("chofer", "conductor", "transportista"),
+    "fecha": ("fecha", "emision", "despacho", "traslado"),
+    "guia": ("guia", "folio", "nro", "numero", "dte"),
+}
+
+_RE_PATENTE = re.compile(r"\b([A-Z]{2,4}\d{2,4})\b", re.IGNORECASE)
+_SPANISH_WORD = r"A-Za-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1"
+_RE_GUIA = re.compile(r"(?:gu[i\u00ed]a|folio|nro)\s*[:#]?\s*(\d{4,10})", re.I)
+_RE_FECHA = re.compile(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b")
+_RE_ORIGEN = re.compile(rf"origen\s*:\s*([{_SPANISH_WORD}]+(?:[ ]+[{_SPANISH_WORD}]+)*)", re.I)
+_RE_DESTINO = re.compile(
+    rf"destino\s*:\s*([{_SPANISH_WORD}]+(?:[ ]+[{_SPANISH_WORD}]+)*)",
+    re.I,
+)
+_RE_CHOFER = re.compile(
+    rf"(?:chofer|conductor)\s*:\s*([{_SPANISH_WORD}]+(?:[ ]+[{_SPANISH_WORD}]+)*)",
+    re.I,
+)
+_RE_ITEM = re.compile(
+    rf"(\d+(?:[.,]\d+)?)\s*(kg|caja|cajas|un|unid|lts?)?\s+([{_SPANISH_WORD}\s]{{3,50}})",
+    re.I,
+)
+
+
+@dataclass
+class RegexResult:
+    origen: str | None = None
+    destino: str | None = None
+    patente: str | None = None
+    chofer: str | None = None
+    fecha: str | None = None
+    guia: str | None = None
+    items: list[LogisticsItem] = field(default_factory=list)
+    confidence: float = 0.0
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -67,190 +105,162 @@ def extract_text(file_bytes: bytes, content_type: str) -> str:
     return ""
 
 
-# ─────────────────────────────────────────────────────────────
-# REGEX
-# ─────────────────────────────────────────────────────────────
-
-_RE_PATENTE = re.compile(r"\b([A-Z]{2,4}\d{2,4})\b", re.IGNORECASE)
-_RE_RUT = re.compile(r"\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b")
-_RE_GUIA = re.compile(r"(?:gu[ií]a|folio|nro)\s*[:#]?\s*(\d{4,10})", re.I)
-_RE_FECHA = re.compile(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b")
-_RE_ORIGEN = re.compile(r"origen\s*:\s*([A-Za-záéíóúñ]+(?:[ ]+[A-Za-záéíóúñ]+)*)", re.I)
-_RE_DESTINO = re.compile(r"destino\s*:\s*([A-Za-záéíóúñ]+(?:[ ]+[A-Za-záéíóúñ]+)*)", re.I)
-_RE_CHOFER = re.compile(
-    r"(?:chofer|conductor)\s*:\s*([A-Za-záéíóúñ]+(?:[ ]+[A-Za-záéíóúñ]+)*)",
-    re.I,
-)
-
-_RE_ITEM = re.compile(
-    r"(\d+(?:[.,]\d+)?)\s*(kg|caja|cajas|un|unid|lts?)?\s+([A-Za-záéíóúñ\s]{3,50})",
-    re.I,
-)
-
-
-# ─────────────────────────────────────────────────────────────
-# DATA STRUCTURES
-# ─────────────────────────────────────────────────────────────
-
-
-@dataclass
-class RegexResult:
-    origen: str | None = None
-    destino: str | None = None
-    patente: str | None = None
-    chofer: str | None = None
-    fecha: str | None = None
-    guia: str | None = None
-    items: list[LogisticsItem] = field(default_factory=list)
-    confidence: float = 0.0
-
-
-# ─────────────────────────────────────────────────────────────
-# REGEX ENGINE
-# ─────────────────────────────────────────────────────────────
-
-
 def run_regex(text: str) -> RegexResult:
-    r = RegexResult()
+    result = RegexResult()
     filled = 0
     total = 6
 
-    if m := _RE_ORIGEN.search(text):
-        r.origen = m.group(1).strip()
+    if match := _RE_ORIGEN.search(text):
+        result.origen = match.group(1).strip()
         filled += 1
 
-    if m := _RE_DESTINO.search(text):
-        r.destino = m.group(1).strip()
+    if match := _RE_DESTINO.search(text):
+        result.destino = match.group(1).strip()
         filled += 1
 
-    if m := _RE_PATENTE.search(text):
-        r.patente = m.group(1).upper()
+    if match := _RE_PATENTE.search(text):
+        result.patente = match.group(1).upper()
         filled += 1
 
-    if m := _RE_CHOFER.search(text):
-        r.chofer = m.group(1).strip()
+    if match := _RE_CHOFER.search(text):
+        result.chofer = match.group(1).strip()
         filled += 1
 
-    if m := _RE_FECHA.search(text):
-        r.fecha = f"{m.group(3)}-{m.group(2):0>2}-{m.group(1):0>2}"
+    if match := _RE_FECHA.search(text):
+        result.fecha = f"{match.group(3)}-{match.group(2):0>2}-{match.group(1):0>2}"
         filled += 1
 
-    if m := _RE_GUIA.search(text):
-        r.guia = m.group(1)
+    if match := _RE_GUIA.search(text):
+        result.guia = match.group(1)
         filled += 1
 
-    for m in _RE_ITEM.finditer(text):
+    for match in _RE_ITEM.finditer(text):
         try:
-            r.items.append(
+            result.items.append(
                 LogisticsItem(
-                    cantidad=int(float(m.group(1).replace(",", "."))),
-                    unidad=m.group(2),
-                    descripcion=m.group(3).strip(),
+                    cantidad=int(float(match.group(1).replace(",", "."))),
+                    unidad=match.group(2),
+                    descripcion=match.group(3).strip(),
                 )
             )
         except Exception:
             continue
 
-    r.confidence = filled / total
-    return r
+    result.confidence = filled / total
+    return result
 
 
-# ─────────────────────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────────────────────
-
-
-def missing_fields(r: RegexResult) -> list[str]:
+def missing_fields(result: RegexResult) -> list[str]:
     fields = []
-    if not r.origen:
+    if not result.origen:
         fields.append("origen")
-    if not r.destino:
+    if not result.destino:
         fields.append("destino")
-    if not r.patente:
+    if not result.patente:
         fields.append("patente")
-    if not r.chofer:
+    if not result.chofer:
         fields.append("chofer")
-    if not r.fecha:
+    if not result.fecha:
         fields.append("fecha")
-    if not r.guia:
+    if not result.guia:
         fields.append("guia")
     return fields
 
 
-def to_schema(r: RegexResult) -> ExtractedLogisticsData:
+def to_schema(result: RegexResult) -> ExtractedLogisticsData:
     return ExtractedLogisticsData(
-        origen=r.origen,
-        destino=r.destino,
-        patente_camion=r.patente,
-        chofer=r.chofer,
-        fecha_despacho=r.fecha,
-        numero_guia=r.guia,
-        items=r.items,
+        origen=result.origen,
+        destino=result.destino,
+        patente_camion=result.patente,
+        chofer=result.chofer,
+        fecha_despacho=result.fecha,
+        numero_guia=result.guia,
+        items=result.items,
         observaciones=None,
     )
 
 
-# ─────────────────────────────────────────────────────────────
-# AI FALLBACK (FIXED TYPES)
-# ─────────────────────────────────────────────────────────────
+def build_ai_context(text: str, missing: list[str]) -> str:
+    """Return a compact text slice with lines likely to contain missing fields."""
+    normalized_missing = [field for field in missing if field in FIELD_KEYWORDS]
+    keywords = {keyword for field in normalized_missing for keyword in FIELD_KEYWORDS[field]}
+
+    selected: list[str] = []
+    for raw_line in text.splitlines():
+        line = " ".join(raw_line.split())
+        if not line:
+            continue
+
+        line_lower = line.lower()
+        if any(keyword in line_lower for keyword in keywords):
+            selected.append(line)
+
+        if len("\n".join(selected)) >= AI_CONTEXT_CHAR_LIMIT:
+            break
+
+    if not selected:
+        return " ".join(text.split())[:AI_CONTEXT_FALLBACK_CHARS]
+
+    return "\n".join(selected)[:AI_CONTEXT_CHAR_LIMIT]
 
 
 async def ai_complete(
     text: str,
-    r: RegexResult,
+    result: RegexResult,
     missing: list[str],
     settings: Settings,
 ) -> ExtractedLogisticsData:
-    """Complete extraction using OpenAI API for missing fields."""
+    """Complete missing fields with OpenAI Structured Outputs."""
     from openai import AsyncOpenAI
 
     if not settings.OPENAI_API_KEY:
-        return to_schema(r)
+        return to_schema(result)
 
     client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    ai_context = build_ai_context(text, missing)
 
     input_messages: list[Any] = [
         {
             "role": "system",
-            "content": "Extract logistics data. Return only factual information.",
+            "content": (
+                "You verify Chilean logistics/tax document fragments. "
+                "Return only factual data present in the provided fragments."
+            ),
         },
         {
             "role": "user",
             "content": [
                 {
                     "type": "input_text",
-                    "text": f"Missing: {', '.join(missing)}\n\n{text[:2500]}",
+                    "text": (
+                        f"Missing fields: {', '.join(missing)}\n"
+                        f"Known regex data: {to_schema(result).model_dump_json()}\n"
+                        f"Relevant fragments:\n{ai_context}"
+                    ),
                 }
             ],
         },
     ]
 
-    resp = await client.responses.parse(
+    response = await client.responses.parse(
         model=settings.OPENAI_MODEL,
         input=input_messages,
         text_format=ExtractedLogisticsData,
         temperature=0,
     )
 
-    ai = resp.output_parsed or ExtractedLogisticsData()
+    ai = response.output_parsed or ExtractedLogisticsData()
 
     return ExtractedLogisticsData(
-        origen=r.origen or ai.origen,
-        destino=r.destino or ai.destino,
-        patente_camion=r.patente or ai.patente_camion,
-        chofer=r.chofer or ai.chofer,
-        fecha_despacho=r.fecha or ai.fecha_despacho,
-        numero_guia=r.guia or ai.numero_guia,
-        items=r.items if r.items else ai.items,
+        origen=result.origen or ai.origen,
+        destino=result.destino or ai.destino,
+        patente_camion=result.patente or ai.patente_camion,
+        chofer=result.chofer or ai.chofer,
+        fecha_despacho=result.fecha or ai.fecha_despacho,
+        numero_guia=result.guia or ai.numero_guia,
+        items=result.items if result.items else ai.items,
         observaciones=ai.observaciones,
     )
-
-
-# ─────────────────────────────────────────────────────────────
-# MAIN PIPELINE
-# ─────────────────────────────────────────────────────────────
-
-AI_THRESHOLD = 0.7
 
 
 async def extract_document(
@@ -263,18 +273,17 @@ async def extract_document(
         raise ValueError("file too small")
 
     text = extract_text(file_bytes, content_type)
-
     if not text:
-        logger.info("No text → raw AI fallback")
+        logger.info("No text extracted from %s", filename)
         return ExtractedLogisticsData()
 
-    r = run_regex(text)
-    missing = missing_fields(r)
+    regex_result = run_regex(text)
+    missing = missing_fields(regex_result)
 
     if not missing:
-        return to_schema(r)
+        return to_schema(regex_result)
 
-    if r.confidence >= AI_THRESHOLD:
-        return to_schema(r)
+    if regex_result.confidence >= AI_THRESHOLD:
+        return to_schema(regex_result)
 
-    return await ai_complete(text, r, missing, settings)
+    return await ai_complete(text, regex_result, missing, settings)
