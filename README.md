@@ -42,18 +42,18 @@ LogisParse automates that workflow through AI-powered structured extraction.
 
 # Core Features
 
-✅ JWT authentication
-✅ Multi-user support
-✅ PDF and image upload
-✅ AI extraction using OpenAI Structured Outputs
-✅ Strong schema validation with Pydantic v2
-✅ Async architecture with FastAPI + SQLAlchemy 2.0
-✅ PostgreSQL persistence
-✅ Request tracking with X-Request-ID
-✅ Docker-ready deployment
-✅ Full dependency injection architecture
-✅ High testability and isolated testing
-✅ Type-safe backend with mypy
+- ✅ JWT authentication
+- ✅ Multi-user support
+- ✅ PDF and image upload
+- ✅ AI extraction using OpenAI Structured Outputs
+- ✅ Strong schema validation with Pydantic v2
+- ✅ Async architecture with FastAPI + SQLAlchemy 2.0
+- ✅ PostgreSQL persistence
+- ✅ Request tracking with X-Request-ID
+- ✅ Docker-ready deployment
+- ✅ Full dependency injection architecture
+- ✅ High testability and isolated testing
+- ✅ Type-safe backend with mypy
 
 ---
 
