@@ -102,6 +102,8 @@ docs/                    # guias tecnicas cortas
 
 ## Puesta en Marcha
 
+### 1. Instalar backend
+
 ```bash
 python -m venv .venv
 .venv\Scripts\Activate.ps1
@@ -111,17 +113,75 @@ python -m pip install -r requirements.txt
 Crear `.env` desde `.env.example`:
 
 ```env
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/logisparse_db
+DATABASE_URL=postgresql+asyncpg://logisparse_user:secretpassword@localhost:5432/logisparse_db
 SECRET_KEY=change-me-with-a-long-random-secret
 OPENAI_API_KEY=sk-...
 DEBUG=true
 ```
 
-Ejecutar API:
+### 2. Levantar PostgreSQL
+
+Opcion recomendada para desarrollo:
+
+```bash
+docker compose up -d db
+```
+
+Cuando la base este saludable, aplicar migraciones:
+
+```bash
+.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+El esquema inicial crea:
+
+| Tabla | Uso |
+| --- | --- |
+| `users` | Usuarios, passwords hasheados y estado activo |
+| `documents` | Archivos subidos, estado, JSON extraido y errores |
+
+La relacion es simple: un usuario tiene muchos documentos.
+
+```mermaid
+erDiagram
+    USERS ||--o{ DOCUMENTS : owns
+    USERS {
+        string id PK
+        string email UK
+        string hashed_password
+        boolean is_active
+        string full_name
+    }
+    DOCUMENTS {
+        string id PK
+        string user_id FK
+        string filename
+        string content_type
+        string status
+        json extracted_data
+        text error_logs
+    }
+```
+
+### 3. Ejecutar API
 
 ```bash
 .venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 ```
+
+La API inicializa el engine async en el `lifespan` de FastAPI y entrega una
+`AsyncSession` por request mediante `app/api/deps.py`.
+
+### 4. Opcion Docker completa
+
+Para levantar API + PostgreSQL juntos:
+
+```bash
+docker compose up --build
+```
+
+En este modo el contenedor `api` espera a que `db` este saludable, ejecuta
+`alembic upgrade head` y luego levanta Uvicorn en `http://localhost:8000`.
 
 Ejecutar tests:
 
@@ -135,7 +195,8 @@ Hay un scaffold listo en `frontend/` con Next.js + Tailwind.
 
 ```bash
 cd frontend
-npm.cmd install
+npm.cmd install --no-audit --no-fund
+Copy-Item .env.example .env.local
 npm.cmd run dev
 ```
 
@@ -143,6 +204,13 @@ Configurar:
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+Verificar frontend:
+
+```bash
+npm.cmd run typecheck
+npm.cmd run build
 ```
 
 Guia de conexion: [docs/FRONTEND_GUIDE.md](docs/FRONTEND_GUIDE.md).
@@ -159,6 +227,28 @@ La suite cubre:
 - Casos de error esperados y acceso entre usuarios.
 
 Cobertura verificada: 92%.
+
+## Base de Datos
+
+La integracion de datos usa tres piezas, sin capas artificiales:
+
+| Pieza | Archivo | Responsabilidad |
+| --- | --- | --- |
+| Configuracion | `app/core/config.py` | Lee `DATABASE_URL`, pool y entorno |
+| Engine/session | `app/core/database.py` | Crea `AsyncEngine` y `async_sessionmaker` |
+| Migraciones | `migrations/` | Versiona el esquema con Alembic |
+
+En produccion o demo con Docker se usa PostgreSQL. En tests se reemplaza la
+dependencia de DB por SQLite en memoria, lo que mantiene la suite rapida y evita
+tocar datos reales.
+
+Comandos utiles:
+
+```bash
+docker compose up -d db
+.venv\Scripts\python.exe -m alembic upgrade head
+.venv\Scripts\python.exe -m alembic current
+```
 
 ## Seguridad Basica
 
