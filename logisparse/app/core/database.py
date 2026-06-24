@@ -33,6 +33,11 @@ def build_engine(settings: Settings) -> AsyncEngine:
         "pool_pre_ping": True,
     }
 
+    # Para PostgreSQL, deshabilitamos la caché de prepared statements
+    # para evitar conflictos con PgBouncer en modo transaction/statement.
+    if settings.DATABASE_URL.startswith("postgresql"):
+        kwargs["connect_args"] = {"statement_cache_size": 0}
+
     if settings.DATABASE_URL.startswith("sqlite"):
         kwargs["poolclass"] = NullPool
     else:

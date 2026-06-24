@@ -1,0 +1,101 @@
+{
+  "_meta": {
+    "descripcion": "Ground truth de datos estructurados para el documento de prueba GuiaDespacho_GDE-2026-00012345.pdf",
+    "proposito": "Validación de sistemas de extracción de datos logísticos (ej. LogisParse)",
+    "documento_sintetico": true,
+    "valido_tributariamente": false
+  },
+  "documento": {
+    "tipo_dte": 52,
+    "tipo_documento": "Guía de Despacho Electrónica",
+    "folio": "GDE-2026-00012345",
+    "fecha_emision": "2026-06-24",
+    "fecha_salida": "2026-06-24",
+    "hora_salida": "08:30",
+    "ind_traslado": 1,
+    "tipo_traslado": "Venta",
+    "ind_traslado_glosa": "Operación constituye venta"
+  },
+  "emisor": {
+    "rut": "76.123.456-7",
+    "razon_social": "Transportes Logística del Sur Ltda.",
+    "giro": "Transporte de Carga por Carretera",
+    "direccion": "Av. Los Pinos 123",
+    "comuna": "Puerto Montt",
+    "region": "Los Lagos"
+  },
+  "receptor": {
+    "rut": "77.987.654-3",
+    "razon_social": "Distribuidora El Roble S.A.",
+    "giro": "Comercio al por Mayor de Productos Alimenticios",
+    "direccion": "Calle Alonso de Ovalle 456",
+    "comuna": "Santiago",
+    "region": "Metropolitana de Santiago"
+  },
+  "traslado": {
+    "origen": {
+      "nombre_recinto": "Bodega Central",
+      "direccion": "Av. Los Pinos 123, Puerto Montt",
+      "region": "Los Lagos"
+    },
+    "destino": {
+      "nombre_recinto": "Centro de Distribución El Roble",
+      "direccion": "Calle Alonso de Ovalle 456, Santiago",
+      "region": "Metropolitana de Santiago"
+    }
+  },
+  "transporte": {
+    "transportista_razon_social": "Starken S.A.",
+    "transportista_rut": "99.999.999-9",
+    "patente_vehiculo": "AB-CD-12",
+    "marca_vehiculo": "Mercedes-Benz",
+    "modelo_vehiculo": "Actros",
+    "chofer_nombre": "Juan Pérez González",
+    "chofer_rut": "12.345.678-9",
+    "chofer_licencia": "Clase A"
+  },
+  "detalle": [
+    {
+      "codigo": "SAL-001",
+      "descripcion": "Salmón Atlántico fresco",
+      "cantidad": 150,
+      "unidad": "UN",
+      "peso_bruto_kg": 1500,
+      "peso_neto_kg": 1350
+    },
+    {
+      "codigo": "CON-002",
+      "descripcion": "Contenedor térmico 20 pies",
+      "cantidad": 2,
+      "unidad": "UN",
+      "peso_bruto_kg": 800,
+      "peso_neto_kg": 750
+    },
+    {
+      "codigo": "HIE-003",
+      "descripcion": "Hielo en escamas",
+      "cantidad": 30,
+      "unidad": "SAC",
+      "peso_bruto_kg": 600,
+      "peso_neto_kg": 580
+    }
+  ],
+  "totales": {
+    "lineas_detalle": 3,
+    "peso_bruto_total_kg": 2900,
+    "peso_neto_total_kg": 2680,
+    "moneda": "CLP",
+    "monto_total_traslado": 12500000
+  },
+  "normativa_aplicable": {
+    "resolucion": "Resolución Exenta SII N°154/2025",
+    "fecha_publicacion": "2025-11-05",
+    "vigencia_postergada_por": "Resolución Exenta SII N°52/2026",
+    "vigencia_efectiva": "2026-11-01",
+    "campos_nuevos_exigidos": [
+      "Individualización de chofer, transportista y vehículo",
+      "Identificación de origen y destino efectivo del traslado",
+      "Clasificación explícita del tipo de traslado (IndTraslado)"
+    ]
+  }
+}

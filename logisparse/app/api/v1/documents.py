@@ -26,10 +26,12 @@ from app.crud.crud_document import (
     get_document_by_id,
     get_user_documents,
     update_document_status,
+    get_recent_corrections,          # <-- NUEVO
+    create_data_correction,          # <-- NUEVO
 )
 from app.models.document import DocumentStatus
 from app.models.user import User
-from app.schemas.document import DocumentResponse
+from app.schemas.document import DocumentResponse, DataCorrectionCreate, DataCorrectionResponse
 from app.services.document_extractor import extract_document
 from app.services.upload_validation import read_and_validate_upload
 
@@ -69,13 +71,21 @@ async def upload_document(
 
     document = processing_document
 
+    # --- OBTENER HISTORIAL DE CORRECCIONES PARA CONTEXTO ---
+    correction_history = await get_recent_corrections(
+        db=db,
+        user_id=current_user.id,
+        limit=5,
+    )
+
     try:
-        # Llamamos al orquestador que ahora usa el AdapterFactory internamente
+        # Pasamos el historial al orquestador
         extracted_data = await extract_document(
             file_bytes=file_content,
             filename=filename,
             content_type=content_type,
             settings=settings,
+            correction_history=correction_history,  # <-- NUEVO
         )
 
     except ValueError as exc:
@@ -129,7 +139,7 @@ async def upload_document(
     extracted_document = await update_document_status(
         db=db,
         document_id=document.id,
-        status=final_status, # <--- Aplicamos el estado dinámico
+        status=final_status,
         extracted_data=extracted_data.model_dump(),
         error_logs=None,
     )
@@ -181,3 +191,40 @@ async def get_document(
         )
 
     return DocumentResponse.model_validate(document)
+
+
+# ─── NUEVO ENDPOINT PARA APRENDIZAJE CONTINUO ──────────────
+
+@router.post(
+    "/{document_id}/corrections",
+    response_model=DataCorrectionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def submit_correction(
+    document_id: str,
+    correction_in: DataCorrectionCreate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> DataCorrectionResponse:
+    """
+    Endpoint para que el humano corrija un campo mal extraído.
+    Esto alimenta el sistema de aprendizaje continuo.
+    """
+    # Verificar que el documento existe y pertenece al usuario
+    document = await get_document_by_id(db, document_id)
+    if document is None:
+        raise DocumentNotFound()
+    if document.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
+    
+    # Guardar la corrección
+    correction = await create_data_correction(
+        db=db,
+        document_id=document_id,
+        correction_in=correction_in,
+    )
+    
+    return DataCorrectionResponse.model_validate(correction)

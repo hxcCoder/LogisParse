@@ -1,6 +1,7 @@
 from typing import Any
-from sqlalchemy import select
+from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models.document import Document, DocumentStatus, DataCorrection
 from app.schemas.document import DataCorrectionCreate
 
@@ -61,7 +62,6 @@ async def update_document_status(
     await db.refresh(document)
     return document
 
-
 # ── NUEVA FUNCIÓN PARA APRENDIZAJE CONTINUO ──────────────
 
 async def create_data_correction(
@@ -80,3 +80,27 @@ async def create_data_correction(
     await db.commit()
     await db.refresh(correction)
     return correction
+
+async def get_recent_corrections(
+    db: AsyncSession,
+    user_id: str,
+    limit: int = 5,
+) -> list[dict]:
+    stmt = (
+        select(DataCorrection)
+        .join(Document)
+        .where(Document.user_id == user_id)
+        .order_by(desc(DataCorrection.created_at))
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    corrections = result.scalars().all()
+    return [
+        {
+            "field_name": c.field_name,
+            "original_value": c.original_value,
+            "corrected_value": c.corrected_value,
+            "adapter_used": c.adapter_used,
+        }
+        for c in corrections
+    ]
