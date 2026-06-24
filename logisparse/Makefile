@@ -1,4 +1,4 @@
-.PHONY: help install dev test lint format typecheck migrate docker-up docker-down validate
+.PHONY: help install dev test lint format typecheck migrate validate
 
 help:
 	@echo "LogisParse developer commands"
@@ -9,7 +9,6 @@ help:
 	@echo "  make format      Format with Ruff and Black"
 	@echo "  make typecheck   Run mypy"
 	@echo "  make migrate     Run Alembic migrations"
-	@echo "  make docker-up   Start local stack"
 
 install:
 	python -m pip install --upgrade pip
@@ -34,11 +33,5 @@ typecheck:
 
 migrate:
 	alembic upgrade head
-
-docker-up:
-	docker compose up --build
-
-docker-down:
-	docker compose down
 
 validate: lint typecheck test

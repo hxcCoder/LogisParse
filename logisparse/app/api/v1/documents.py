@@ -1,7 +1,7 @@
 """Documents API router.
 
 Upload → validate → extract → store.
-Simple linear flow with minimal abstraction.
+Evolucionado a SaaS: Evalúa confidence_score y redirige a revisión humana si es necesario.
 """
 
 import logging
@@ -70,6 +70,7 @@ async def upload_document(
     document = processing_document
 
     try:
+        # Llamamos al orquestador que ahora usa el AdapterFactory internamente
         extracted_data = await extract_document(
             file_bytes=file_content,
             filename=filename,
@@ -114,10 +115,21 @@ async def upload_document(
 
         return DocumentResponse.model_validate(failed_document)
 
+    # ==========================================
+    # NUEVA LÓGICA DE NEGOCIO SaaS (AUDITORÍA)
+    # ==========================================
+    score = extracted_data.confidence_score or 0.0
+    
+    # Decidimos el estado final basado en la confianza de nuestros adaptadores
+    final_status = DocumentStatus.EXTRACTED
+    if score < 80.0:
+        logger.info("Document %s routed to HUMAN REVIEW (Score: %s)", document.id, score)
+        final_status = DocumentStatus.NEEDS_REVIEW
+
     extracted_document = await update_document_status(
         db=db,
         document_id=document.id,
-        status=DocumentStatus.EXTRACTED,
+        status=final_status, # <--- Aplicamos el estado dinámico
         extracted_data=extracted_data.model_dump(),
         error_logs=None,
     )
