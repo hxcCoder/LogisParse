@@ -78,9 +78,7 @@ class GenericLLMAdapter(BaseAdapter):
             parsed_data = response.choices[0].message.parsed
 
             if not parsed_data:
-                logger.error(
-                    "OpenAI falló al estructurar la respuesta (parsed es None)."
-                )
+                logger.error("OpenAI falló al estructurar la respuesta (parsed es None).")
                 return {"adapter_used": "GenericLLMAdapter (Error de Parseo)"}
 
             ai_data = parsed_data.model_dump()
