@@ -57,11 +57,10 @@ def validate_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
     """
     Valida cada campo extraído y lo deja como None si no cumple con el formato esperado.
     """
-
     def normalize_city(name: str) -> str:
         return " ".join(word.capitalize() for word in name.lower().split())
 
-    validated = {}
+    validated: dict[str, Any] = {}  # <--- ANOTACIÓN AÑADIDA AQUÍ
 
     for campo, valor in data.items():
         if not valor or not isinstance(valor, str) or len(valor.strip()) < 2:
@@ -78,28 +77,24 @@ def validate_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
                 validated[campo] = None
 
         elif campo == "chofer":
-            # Debe ser nombre y apellido (dos palabras con mayúscula)
             if re.match(r"^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$", valor):
                 validated[campo] = valor
             else:
                 validated[campo] = None
 
         elif campo == "fecha_despacho":
-            # Formato dd/mm/aaaa o aaaa-mm-dd
             if re.match(r"^\d{2}/\d{2}/\d{4}$", valor) or re.match(r"^\d{4}-\d{2}-\d{2}$", valor):
                 validated[campo] = valor
             else:
                 validated[campo] = None
 
         elif campo == "numero_guia":
-            # Solo números
             if re.match(r"^\d+$", valor):
                 validated[campo] = valor
             else:
                 validated[campo] = None
 
         elif campo == "patente_camion":
-            # Formato XX-XX-12 o XX-1234 (o sin guiones)
             if re.match(r"^[A-Z]{2}-?[A-Z]{2}-?\d{2}$", valor) or re.match(
                 r"^[A-Z]{2}-?\d{4}$", valor
             ):
@@ -108,7 +103,6 @@ def validate_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
                 validated[campo] = None
 
         else:
-            # Otros campos: se pasan tal cual
             validated[campo] = valor
 
     return validated
