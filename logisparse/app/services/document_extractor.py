@@ -57,6 +57,7 @@ def validate_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
     """
     Valida cada campo extraído y lo deja como None si no cumple con el formato esperado.
     """
+
     def normalize_city(name: str) -> str:
         return " ".join(word.capitalize() for word in name.lower().split())
 
