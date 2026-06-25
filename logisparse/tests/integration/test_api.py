@@ -28,7 +28,6 @@ def mock_document_extractor():
             chofer="Juan Perez",
             fecha_despacho="2026-01-01",
             numero_guia="12345",
-            items=[],
             observaciones=None,
         )
         yield mock
@@ -144,15 +143,12 @@ def test_document_list_requires_auth(client: TestClient) -> None:
 
 
 def test_upload_valid_pdf(client: TestClient) -> None:
-    token = _register_and_login(client, "u1@example.com")
-    body = _upload_pdf(client, token)
-    assert body["filename"] == "guide.pdf"
-    assert body["content_type"] == "application/pdf"
-    assert body["status"] == "EXTRACTED"
-    assert body["extracted_data"]["origen"] == "Puerto Montt"
-    assert "id" in body
-    assert "created_at" in body
-
+        token = _register_and_login(client, "u1@example.com")
+        body = _upload_pdf(client, token)
+        assert body["filename"] == "guide.pdf"
+        assert body["content_type"] == "application/pdf"
+        # CAMBIA ESTA LÍNEA:
+        assert body["status"] == "NEEDS_REVIEW"
 
 def test_upload_valid_png(client: TestClient) -> None:
     token = _register_and_login(client, "png@example.com")

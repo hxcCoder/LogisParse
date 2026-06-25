@@ -134,6 +134,8 @@ async def test_upload_document_route_success(
             origen="Puerto Montt",
             destino="Santiago",
             numero_guia="12345",
+            patente_camion="AB1234",
+            confidence_score=95.0,
         )
 
     monkeypatch.setattr(documents, "extract_document", fake_extract_document)
@@ -142,8 +144,9 @@ async def test_upload_document_route_success(
     response = await documents.upload_document(upload, user, db_session, test_settings)
 
     assert response.status == DocumentStatus.EXTRACTED
-    assert response.extracted_data["origen"] == "Puerto Montt"
-
+    assert response.extracted_data is not None # <-- Buena práctica para Pylance
+    assert response.extracted_data.origen == "Puerto Montt" # <-- Usa punto, no corchete
+    assert response.extracted_data.patente_camion == "AB1234" # <-- Usa punto, no corchete
 
 @pytest.mark.asyncio
 async def test_upload_document_route_marks_failed_on_value_error(

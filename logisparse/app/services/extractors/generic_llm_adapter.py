@@ -24,7 +24,7 @@ class GenericLLMAdapter(BaseAdapter):
                 "adapter_used": "GenericLLMAdapter (Fallo API)"
             }
 
-        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url="https://api.groq.com/openai/v1")
 
         # Prompt mejorado: instrucciones estrictas y claras
         system_prompt = (

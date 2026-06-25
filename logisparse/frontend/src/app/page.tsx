@@ -1,23 +1,7 @@
-import type { DocumentResponse } from "@/lib/api";
+"use client";
 
-const demoDocument: DocumentResponse = {
-  id: "demo-001",
-  filename: "guia-despacho-salmon.pdf",
-  content_type: "application/pdf",
-  status: "EXTRACTED",
-  extracted_data: {
-    origen: "Puerto Montt",
-    destino: "Santiago",
-    patente_camion: "ABCD12",
-    chofer: "Juan Perez",
-    fecha_despacho: "2026-01-01",
-    numero_guia: "123456",
-    observaciones: "Requiere revision humana final"
-  },
-  error_logs: null,
-  created_at: "2026-01-01T09:00:00Z",
-  updated_at: "2026-01-01T09:00:10Z"
-};
+import { useState, useRef } from "react";
+import { uploadDocument, type DocumentResponse } from "@/lib/api";
 
 const pipeline = [
   { label: "Texto", detail: "PDF u OCR local", tone: "bg-sea" },
@@ -27,16 +11,59 @@ const pipeline = [
   { label: "Revision", detail: "Humano valida", tone: "bg-ink" }
 ];
 
-const fields = [
-  ["Origen", demoDocument.extracted_data?.origen],
-  ["Destino", demoDocument.extracted_data?.destino],
-  ["Patente", demoDocument.extracted_data?.patente_camion],
-  ["Chofer", demoDocument.extracted_data?.chofer],
-  ["Fecha", demoDocument.extracted_data?.fecha_despacho],
-  ["Guia", demoDocument.extracted_data?.numero_guia]
-];
-
 export default function Home() {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  
+  // Empezamos con tu documento demo por defecto, pero lo actualizaremos con el real
+  const [document, setDocument] = useState<DocumentResponse | null>({
+    id: "demo-001",
+    filename: "guia-despacho-salmon.pdf",
+    content_type: "application/pdf",
+    status: "EXTRACTED",
+    extracted_data: {
+      origen: "Puerto Montt",
+      destino: "Santiago",
+      patente_camion: "ABCD12",
+      chofer: "Juan Perez",
+      fecha_despacho: "2026-01-01",
+      numero_guia: "123456",
+      observaciones: "Requiere revision humana final"
+    },
+    error_logs: null,
+    created_at: "2026-01-01T09:00:00Z",
+    updated_at: "2026-01-01T09:00:10Z"
+  });
+
+  // Función que se ejecuta cuando el usuario selecciona un archivo
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    try {
+      // Llamamos a la API real
+      const realDoc = await uploadDocument(file);
+      setDocument(realDoc); // Actualizamos la pantalla con los datos reales de la IA
+    } catch (error) {
+      console.error(error);
+      alert("Hubo un error subiendo el documento. Revisa la consola.");
+    } finally {
+      setIsUploading(false);
+      // Limpiamos el input para poder subir el mismo archivo de nuevo si es necesario
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const fields = [
+    ["Origen", document?.extracted_data?.origen],
+    ["Destino", document?.extracted_data?.destino],
+    ["Patente", document?.extracted_data?.patente_camion],
+    ["Chofer", document?.extracted_data?.chofer],
+    ["Fecha", document?.extracted_data?.fecha_despacho],
+    ["Guia", document?.extracted_data?.numero_guia]
+  ];
+
   return (
     <main className="min-h-screen bg-[#f5f7fa] text-ink">
       <section className="border-b border-line bg-white">
@@ -61,8 +88,22 @@ export default function Home() {
               Interfaz pensada para administrativos: subir documento, ver campos
               detectados y marcar revision final sin exponer complejidad tecnica.
             </p>
-            <button className="mt-5 w-full rounded bg-ink px-4 py-3 text-sm font-semibold text-white">
-              Subir PDF o imagen
+            
+            {/* Input oculto para manejar el archivo */}
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              onChange={handleFileChange} 
+              className="hidden" 
+              accept=".pdf,.png,.jpg,.jpeg" 
+            />
+            
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              className={`mt-5 w-full rounded px-4 py-3 text-sm font-semibold text-white ${isUploading ? 'bg-gray-400 cursor-wait' : 'bg-ink hover:bg-slate-800'}`}
+            >
+              {isUploading ? "Procesando con IA..." : "Subir PDF o imagen"}
             </button>
           </div>
 
@@ -86,21 +127,21 @@ export default function Home() {
           <div className="rounded-md border border-line bg-white shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line px-5 py-4">
               <div>
-                <h2 className="text-lg font-semibold">{demoDocument.filename}</h2>
+                <h2 className="text-lg font-semibold">{document?.filename || "Sin documento"}</h2>
                 <p className="text-sm text-slate-500">Documento extraido y listo para revision</p>
               </div>
-              <span className="rounded border border-kelp px-3 py-1 text-xs font-semibold text-kelp">
-                {demoDocument.status}
+              <span className={`rounded border px-3 py-1 text-xs font-semibold ${document?.status === 'NEEDS_REVIEW' ? 'border-amber text-amber' : 'border-kelp text-kelp'}`}>
+                {document?.status || "PENDING"}
               </span>
             </div>
 
             <div className="grid gap-px bg-line md:grid-cols-3">
-              {fields.map(([label, value]) => (
-                <div key={label} className="bg-white p-5">
+              {fields.map(([label, value], idx) => (
+                <div key={idx} className="bg-white p-5">
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
                     {label}
                   </p>
-                  <p className="mt-2 text-base font-semibold">{value ?? "Pendiente"}</p>
+                  <p className="mt-2 text-base font-semibold">{value ? String(value) : "Pendiente"}</p>
                 </div>
               ))}
             </div>

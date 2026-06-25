@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     PASSWORD_MIN_LENGTH: int = 8
 
     OPENAI_API_KEY: str = ""
-    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_MODEL: str = "llama3-8b-8192"
 
     APP_TITLE: str = "LogisParse"
     APP_VERSION: str = "0.1.0"

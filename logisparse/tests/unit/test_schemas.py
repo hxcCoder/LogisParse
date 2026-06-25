@@ -1,5 +1,6 @@
 """Tests for Pydantic schemas validation."""
 
+from app.models.document import DocumentStatus
 import pytest
 from pydantic import ValidationError
 
@@ -36,20 +37,16 @@ def test_token_response_validation() -> None:
 
 
 def test_extracted_logistics_data_validation() -> None:
-    """Test ExtractedLogisticsData schema."""
     data = ExtractedLogisticsData(
         origen="Puerto Montt",
-        destino="Puerto Varas",
-        patente_camion="ABC-1234",
-        fecha_despacho="2026-05-29",
-        items=[
-            {"sku": "SALMON-001", "cantidad": 100},
-            {"sku": "SALMON-002", "cantidad": 250},
-        ],
+        destino="Santiago",
+        numero_guia="12345",
+        patente_camion="AB1234",
+        chofer="Juan",
+        # ¡Elimina la línea de items=[...] que tenías aquí!
     )
     assert data.origen == "Puerto Montt"
-    assert len(data.items) == 2
-
+    # ¡Elimina el assert data.items que tenías aquí abajo!
 
 def test_document_response_validation() -> None:
     """Test DocumentResponse schema."""
@@ -59,8 +56,12 @@ def test_document_response_validation() -> None:
         id="doc-123",
         filename="guide.pdf",
         content_type="application/pdf",
-        status="PENDING",
-        uploaded_at=datetime.now(),
+        status=DocumentStatus.PENDING,# type: ignore
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        extracted_data=None,
+        error_logs=None
     )
+    assert doc.id == "doc-123"
     assert doc.filename == "guide.pdf"
     assert doc.status == "PENDING"

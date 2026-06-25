@@ -73,6 +73,22 @@
 5. **Aprendizaje continuo**: tabla `data_corrections` que alimenta el modelo sin intervención de desarrolladores.
 
 ---
+# 🛠️ Desarrollo y Calidad
+
+Para garantizar la estabilidad del motor de extracción, el proyecto cuenta con un entorno de pruebas automatizadas con cobertura total del código.
+
+### Ejecutar Pruebas Locales
+Si deseas replicar el entorno de pruebas y verificar la integridad de los validadores semánticos y adaptadores:
+
+```bash
+# Activar el entorno virtual e instalar dependencias de desarrollo
+source .venv/bin/activate  # En Linux/macOS
+.venv\Scripts\activate     # En Windows
+
+# Ejecutar la suite de pruebas con reporte de cobertura
+pytest --cov=app
+```
+---
 
 ## 👥 Autor
 

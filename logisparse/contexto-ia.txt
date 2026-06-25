@@ -1,0 +1,3590 @@
+<repository>
+
+<directory_tree>
+├── .dockerignore
+├── .editorconfig
+├── .env.example
+├── .gitignore
+├── .mypy_cache
+├── .pre-commit-config.yaml
+├── .pytest_cache
+├── .ruff_cache
+├── alembic.ini
+├── app
+│   ├── __init__.py
+│   ├── api
+│   │   ├── __init__.py
+│   │   ├── deps.py
+│   │   └── v1
+│   │       ├── __init__.py
+│   │       ├── auth.py
+│   │       └── documents.py
+│   ├── core
+│   │   ├── __init__.py
+│   │   ├── config.py
+│   │   ├── database.py
+│   │   ├── exceptions.py
+│   │   ├── logging.py
+│   │   ├── middleware.py
+│   │   └── security.py
+│   ├── crud
+│   │   ├── __init__.py
+│   │   ├── crud_document.py
+│   │   └── crud_user.py
+│   ├── main.py
+│   ├── models
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── document.py
+│   │   └── user.py
+│   ├── schemas
+│   │   ├── __init__.py
+│   │   ├── document.py
+│   │   ├── extraction.py
+│   │   ├── token.py
+│   │   └── user.py
+│   └── services
+│       ├── __init__.py
+│       ├── document_extractor.py
+│       ├── extractors
+│       │   ├── adapter_factory.py
+│       │   ├── base_adapter.py
+│       │   ├── generic_llm_adapter.py
+│       │   └── specific
+│       │       └── starken_adapter.py
+│       └── upload_validation.py
+├── Dockerfile
+├── frontend
+│   ├── .env.example
+│   ├── next-env.d.ts
+│   ├── next.config.mjs
+│   ├── package.json
+│   ├── postcss.config.mjs
+│   ├── README.md
+│   ├── src
+│   │   ├── app
+│   │   │   ├── globals.css
+│   │   │   ├── layout.tsx
+│   │   │   └── page.tsx
+│   │   └── lib
+│   │       └── api.ts
+│   ├── tailwind.config.ts
+│   └── tsconfig.json
+├── Makefile
+├── migrations
+│   ├── env.py
+│   ├── script.py.mako
+│   └── versions
+│       └── 001_initial.py
+├── pyproject.toml
+├── pytest.ini
+├── requirements.txt
+├── scripts
+├── setup.py
+└── tests
+    ├── conftest.py
+    ├── integration
+    │   └── test_api.py
+    └── unit
+        ├── test_adapters.py
+        ├── test_crud.py
+        ├── test_extractor.py
+        ├── test_health_endpoints.py
+        ├── test_routes_direct.py
+        ├── test_schemas.py
+        ├── test_security.py
+        └── test_upload_validation.py
+</directory_tree>
+
+<file path="app/api/deps.py">
+&quot;&quot;&quot;FastAPI dependency injections.
+
+All dependencies are defined here and explicitly passed to endpoints via Depends().
+This ensures:
+- No global state in imports
+- Full testability via dependency_overrides
+- Explicit dependency graph
+- Type safety
+&quot;&quot;&quot;
+
+import logging
+from collections.abc import AsyncGenerator
+from typing import Annotated
+
+from fastapi import Depends, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.core.config import Settings, get_settings
+from app.core.exceptions import InvalidCredentialsException, UserInactiveException
+from app.core.security import decode_token
+from app.crud.crud_user import get_user_by_id
+from app.models.user import User
+
+logger = logging.getLogger(__name__)
+security = HTTPBearer(auto_error=True)
+
+
+# ── SETTINGS DEPENDENCY ──────────────────────────────────
+def get_settings_dep() -&gt; Settings:
+    &quot;&quot;&quot;Inject Settings instance.
+
+    This can be overridden in tests:
+    app.dependency_overrides[get_settings_dep] = lambda: fake_settings
+    &quot;&quot;&quot;
+    return get_settings()
+
+
+# ── DATABASE DEPENDENCY ──────────────────────────────────
+async def get_db(request: Request) -&gt; AsyncGenerator[AsyncSession, None]:
+    &quot;&quot;&quot;Inject AsyncSession from FastAPI app.state.session_maker.
+
+    The session_maker must be set during app startup (in lifespan).
+
+    This dependency:
+    - Retrieves session_maker from app.state (set during startup)
+    - Creates a new session per request
+    - Automatically yields and closes the session
+    - Can be overridden in tests via app.dependency_overrides[get_db]
+
+    Args:
+        request: FastAPI Request object (contains app.state)
+
+    Yields:
+        AsyncSession instance for database operations
+    &quot;&quot;&quot;
+    session_maker: async_sessionmaker[AsyncSession] = request.app.state.session_maker
+
+    async with session_maker() as session:
+        yield session
+
+
+# ── AUTHENTICATION DEPENDENCY ────────────────────────────
+async def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+) -&gt; User:
+    &quot;&quot;&quot;Inject current authenticated user from JWT token.
+
+    Args:
+        credentials: JWT token from Authorization header
+        db: Database session
+        settings: Settings for JWT decoding
+
+    Returns:
+        Authenticated and active User instance
+
+    Raises:
+        InvalidCredentialsException: If token is invalid or user not found
+        UserInactiveException: If user is not active
+    &quot;&quot;&quot;
+    payload = decode_token(credentials.credentials, settings.SECRET_KEY, settings.ALGORITHM)
+    if payload is None:
+        raise InvalidCredentialsException()
+
+    user_id = payload.get(&quot;sub&quot;)
+    if not isinstance(user_id, str):
+        raise InvalidCredentialsException()
+
+    user = await get_user_by_id(db, user_id)
+    if user is None:
+        logger.info(&quot;Token references missing user_id=%s&quot;, user_id)
+        raise InvalidCredentialsException()
+
+    if not user.is_active:
+        raise UserInactiveException()
+
+    return user
+
+</file>
+
+<file path="app/api/v1/auth.py">
+from datetime import timedelta
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_db, get_settings_dep
+from app.core.config import Settings
+from app.core.exceptions import (
+    EmailAlreadyRegistered,
+    InvalidCredentialsException,
+    UserInactiveException,
+)
+from app.core.security import create_access_token
+from app.crud.crud_user import (
+    authenticate_user,
+    create_user,
+    get_user_by_email,
+)
+from app.schemas.token import TokenResponse
+from app.schemas.user import UserCreate, UserLogin, UserResponse
+
+router = APIRouter()
+
+
+@router.post(
+    &quot;/register&quot;,
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register(
+    user_data: UserCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -&gt; UserResponse:
+    existing_user = await get_user_by_email(db, user_data.email)
+
+    if existing_user is not None:
+        raise EmailAlreadyRegistered()
+
+    user = await create_user(
+        db,
+        email=user_data.email,
+        password=user_data.password,
+        full_name=user_data.full_name,
+    )
+
+    return UserResponse.model_validate(user)
+
+
+@router.post(&quot;/login&quot;, response_model=TokenResponse)
+async def login(
+    credentials: UserLogin,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+) -&gt; TokenResponse:
+    user = await authenticate_user(
+        db,
+        credentials.email,
+        credentials.password,
+    )
+
+    if user is None:
+        raise InvalidCredentialsException()
+
+    if not user.is_active:
+        raise UserInactiveException()
+
+    access_token = create_access_token(
+        data={&quot;sub&quot;: str(user.id)},
+        secret_key=settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM,
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+
+    return TokenResponse(access_token=access_token)
+
+</file>
+
+<file path="app/api/v1/documents.py">
+&quot;&quot;&quot;Documents API router.
+
+Upload → validate → extract → store.
+Evolucionado a SaaS: Evalúa confidence_score y redirige a revisión humana si es necesario.
+&quot;&quot;&quot;
+
+import logging
+from typing import Annotated
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_current_user, get_db, get_settings_dep
+from app.core.config import Settings
+from app.core.exceptions import DocumentNotFound
+from app.crud.crud_document import (
+    create_document,
+    get_document_by_id,
+    get_user_documents,
+    update_document_status,
+    get_recent_corrections,          # &lt;-- NUEVO
+    create_data_correction,          # &lt;-- NUEVO
+)
+from app.models.document import DocumentStatus
+from app.models.user import User
+from app.schemas.document import DocumentResponse, DataCorrectionCreate, DataCorrectionResponse
+from app.services.document_extractor import extract_document
+from app.services.upload_validation import read_and_validate_upload
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+@router.post(
+    &quot;/upload&quot;,
+    response_model=DocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_document(
+    file: Annotated[UploadFile, File()],
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+) -&gt; DocumentResponse:
+    filename, content_type, file_content = await read_and_validate_upload(file)
+
+    document = await create_document(
+        db=db,
+        user_id=current_user.id,
+        filename=filename,
+        content_type=content_type,
+    )
+
+    processing_document = await update_document_status(
+        db=db,
+        document_id=document.id,
+        status=DocumentStatus.PROCESSING,
+    )
+
+    if processing_document is None:
+        raise DocumentNotFound()
+
+    document = processing_document
+
+    # --- OBTENER HISTORIAL DE CORRECCIONES PARA CONTEXTO ---
+    correction_history = await get_recent_corrections(
+        db=db,
+        user_id=current_user.id,
+        limit=5,
+    )
+
+    try:
+        # Pasamos el historial al orquestador
+        extracted_data = await extract_document(
+            file_bytes=file_content,
+            filename=filename,
+            content_type=content_type,
+            settings=settings,
+            correction_history=correction_history,  # &lt;-- NUEVO
+        )
+
+    except ValueError as exc:
+        logger.info(
+            &quot;Document validation failed for document_id=%s: %s&quot;,
+            document.id,
+            exc,
+        )
+
+        failed_document = await update_document_status(
+            db=db,
+            document_id=document.id,
+            status=DocumentStatus.FAILED,
+            error_logs=str(exc),
+        )
+
+        if failed_document is None:
+            raise DocumentNotFound() from exc
+
+        return DocumentResponse.model_validate(failed_document)
+
+    except Exception as exc:
+        logger.exception(
+            &quot;Unexpected extraction error for document_id=%s&quot;,
+            document.id,
+        )
+
+        failed_document = await update_document_status(
+            db=db,
+            document_id=document.id,
+            status=DocumentStatus.FAILED,
+            error_logs=&quot;Extraction failed unexpectedly&quot;,
+        )
+
+        if failed_document is None:
+            raise DocumentNotFound() from exc
+
+        return DocumentResponse.model_validate(failed_document)
+
+    # ==========================================
+    # NUEVA LÓGICA DE NEGOCIO SaaS (AUDITORÍA)
+    # ==========================================
+    score = extracted_data.confidence_score or 0.0
+    
+    # Decidimos el estado final basado en la confianza de nuestros adaptadores
+    final_status = DocumentStatus.EXTRACTED
+    if score &lt; 80.0:
+        logger.info(&quot;Document %s routed to HUMAN REVIEW (Score: %s)&quot;, document.id, score)
+        final_status = DocumentStatus.NEEDS_REVIEW
+
+    extracted_document = await update_document_status(
+        db=db,
+        document_id=document.id,
+        status=final_status,
+        extracted_data=extracted_data.model_dump(),
+        error_logs=None,
+    )
+
+    if extracted_document is None:
+        raise DocumentNotFound()
+
+    return DocumentResponse.model_validate(extracted_document)
+
+
+@router.get(
+    &quot;&quot;,
+    response_model=list[DocumentResponse],
+)
+async def list_documents(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -&gt; list[DocumentResponse]:
+    documents = await get_user_documents(
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+    )
+
+    return [DocumentResponse.model_validate(document) for document in documents]
+
+
+@router.get(
+    &quot;/{document_id}&quot;,
+    response_model=DocumentResponse,
+)
+async def get_document(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -&gt; DocumentResponse:
+    document = await get_document_by_id(db, document_id)
+
+    if document is None:
+        raise DocumentNotFound()
+
+    if document.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=&quot;Access denied&quot;,
+        )
+
+    return DocumentResponse.model_validate(document)
+
+
+# ─── NUEVO ENDPOINT PARA APRENDIZAJE CONTINUO ──────────────
+
+@router.post(
+    &quot;/{document_id}/corrections&quot;,
+    response_model=DataCorrectionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def submit_correction(
+    document_id: str,
+    correction_in: DataCorrectionCreate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -&gt; DataCorrectionResponse:
+    &quot;&quot;&quot;
+    Endpoint para que el humano corrija un campo mal extraído.
+    Esto alimenta el sistema de aprendizaje continuo.
+    &quot;&quot;&quot;
+    # Verificar que el documento existe y pertenece al usuario
+    document = await get_document_by_id(db, document_id)
+    if document is None:
+        raise DocumentNotFound()
+    if document.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=&quot;Access denied&quot;,
+        )
+    
+    # Guardar la corrección
+    correction = await create_data_correction(
+        db=db,
+        document_id=document_id,
+        correction_in=correction_in,
+    )
+    
+    return DataCorrectionResponse.model_validate(correction)
+</file>
+
+<file path="app/api/v1/__init__.py">
+
+</file>
+
+<file path="app/api/__init__.py">
+
+</file>
+
+<file path="app/core/config.py">
+from functools import lru_cache
+from typing import Any
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    &quot;&quot;&quot;Runtime configuration loaded from environment variables.&quot;&quot;&quot;
+
+    model_config = SettingsConfigDict(
+        env_file=&quot;.env&quot;,
+        env_file_encoding=&quot;utf-8&quot;,
+        case_sensitive=True,
+        extra=&quot;ignore&quot;,
+    )
+
+    DATABASE_URL: str = (
+        &quot;postgresql+asyncpg://logisparse_user:secretpassword@localhost:5432/logisparse_db&quot;
+    )
+
+    SQLALCHEMY_ECHO: bool = False
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 10
+
+    SECRET_KEY: str = Field(
+        default=&quot;change-me-in-production&quot;,
+        min_length=16,
+    )
+
+    ALGORITHM: str = &quot;HS256&quot;
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    PASSWORD_MIN_LENGTH: int = 8
+
+    OPENAI_API_KEY: str = &quot;&quot;
+    OPENAI_MODEL: str = &quot;gpt-4o-mini&quot;
+
+    APP_TITLE: str = &quot;LogisParse&quot;
+    APP_VERSION: str = &quot;0.1.0&quot;
+
+    DEBUG: bool = True
+    ENVIRONMENT: str = &quot;development&quot;
+
+    ALLOWED_ORIGINS: list[str] = Field(
+        default=[
+            &quot;http://localhost:3000&quot;,
+            &quot;http://localhost:8000&quot;,
+        ]
+    )
+
+    MAX_FILE_SIZE_MB: int = 20
+
+    ALLOWED_EXTENSIONS: list[str] = Field(default=[&quot;pdf&quot;, &quot;jpg&quot;, &quot;jpeg&quot;, &quot;png&quot;])
+
+    RATE_LIMIT_REQUESTS: int = 120
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
+
+    EMAIL_ADDRESS: str = &quot;&quot;
+    EMAIL_PASSWORD: str = &quot;&quot;
+    EMAIL_CHECK_INTERVAL_MINUTES: int = 2
+
+    LOG_LEVEL: str = &quot;INFO&quot;
+
+    @field_validator(&quot;ALLOWED_ORIGINS&quot;, mode=&quot;before&quot;)
+    @classmethod
+    def parse_allowed_origins(cls, value: Any) -&gt; list[str]:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(&quot;,&quot;) if item.strip()]
+
+        if isinstance(value, list):
+            return value
+
+        return [
+            &quot;http://localhost:3000&quot;,
+            &quot;http://localhost:8000&quot;,
+        ]
+
+    @field_validator(&quot;ALLOWED_EXTENSIONS&quot;, mode=&quot;before&quot;)
+    @classmethod
+    def parse_allowed_extensions(cls, value: Any) -&gt; list[str]:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(&quot;,&quot;) if item.strip()]
+
+        if isinstance(value, list):
+            return value
+
+        return [&quot;pdf&quot;, &quot;jpg&quot;, &quot;jpeg&quot;, &quot;png&quot;]
+
+    @property
+    def max_file_size_bytes(self) -&gt; int:
+        return self.MAX_FILE_SIZE_MB * 1024 * 1024
+
+    @property
+    def is_production(self) -&gt; bool:
+        return self.ENVIRONMENT.lower() == &quot;production&quot;
+
+
+@lru_cache
+def get_settings() -&gt; Settings:
+    return Settings()
+
+
+# Compatibilidad temporal con imports legacy
+settings = get_settings()
+
+</file>
+
+<file path="app/core/database.py">
+&quot;&quot;&quot;Database engine and session factory.
+
+Pure functional approach - no global state mutations.
+All database resources are created explicitly and managed via FastAPI lifespan.
+&quot;&quot;&quot;
+
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.pool import NullPool
+
+from app.core.config import Settings
+
+
+def build_engine(settings: Settings) -&gt; AsyncEngine:
+    &quot;&quot;&quot;Create AsyncEngine instance based on settings.
+
+    This is a pure function - no side effects, no global state.
+    Call this once during app startup and store result in app.state.
+
+    Args:
+        settings: Settings instance with database configuration
+
+    Returns:
+        Configured AsyncEngine instance
+    &quot;&quot;&quot;
+    kwargs: dict[str, object] = {
+        &quot;echo&quot;: settings.SQLALCHEMY_ECHO,
+        &quot;future&quot;: True,
+        &quot;pool_pre_ping&quot;: True,
+    }
+
+    # Para PostgreSQL, deshabilitamos la caché de prepared statements
+    # para evitar conflictos con PgBouncer en modo transaction/statement.
+    if settings.DATABASE_URL.startswith(&quot;postgresql&quot;):
+        kwargs[&quot;connect_args&quot;] = {&quot;statement_cache_size&quot;: 0}
+
+    if settings.DATABASE_URL.startswith(&quot;sqlite&quot;):
+        kwargs[&quot;poolclass&quot;] = NullPool
+    else:
+        kwargs[&quot;pool_size&quot;] = settings.DB_POOL_SIZE
+        kwargs[&quot;max_overflow&quot;] = settings.DB_MAX_OVERFLOW
+
+    return create_async_engine(settings.DATABASE_URL, **kwargs)
+
+
+def build_session_maker(
+    engine: AsyncEngine,
+) -&gt; async_sessionmaker[AsyncSession]:
+    &quot;&quot;&quot;Create AsyncSessionMaker instance.
+
+    This is a pure function - creates a new session factory for the given engine.
+
+    Args:
+        engine: AsyncEngine instance
+
+    Returns:
+        Configured async_sessionmaker instance
+    &quot;&quot;&quot;
+    return async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+    )
+</file>
+
+<file path="app/core/exceptions.py">
+from fastapi import HTTPException, status
+
+
+class InvalidCredentialsException(HTTPException):
+    def __init__(self) -&gt; None:
+        super().__init__(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=&quot;Invalid credentials&quot;,
+            headers={&quot;WWW-Authenticate&quot;: &quot;Bearer&quot;},
+        )
+
+
+class UserInactiveException(HTTPException):
+    def __init__(self) -&gt; None:
+        super().__init__(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=&quot;Inactive user&quot;,
+        )
+
+
+class DocumentNotFound(HTTPException):
+    def __init__(self) -&gt; None:
+        super().__init__(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=&quot;Document not found&quot;,
+        )
+
+
+class EmailAlreadyRegistered(HTTPException):
+    def __init__(self) -&gt; None:
+        super().__init__(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=&quot;Email already registered&quot;,
+        )
+
+</file>
+
+<file path="app/core/logging.py">
+import logging
+import sys
+from contextvars import ContextVar
+
+request_id_context: ContextVar[str] = ContextVar(&quot;request_id&quot;, default=&quot;-&quot;)
+
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -&gt; bool:
+        record.request_id = request_id_context.get()
+        return True
+
+
+def configure_logging(level: str = &quot;INFO&quot;) -&gt; None:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.addFilter(RequestIdFilter())
+    handler.setFormatter(
+        logging.Formatter(&quot;%(asctime)s %(levelname)s [%(request_id)s] %(name)s: %(message)s&quot;)
+    )
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(level.upper())
+
+</file>
+
+<file path="app/core/middleware.py">
+import time
+import uuid
+from collections import defaultdict, deque
+from collections.abc import Callable
+
+from fastapi import Request, Response, status
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from app.core.config import settings
+from app.core.logging import request_id_context
+
+
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next: Callable) -&gt; Response:
+        request_id = request.headers.get(&quot;X-Request-ID&quot;, str(uuid.uuid4()))
+        token = request_id_context.set(request_id)
+        start = time.perf_counter()
+
+        try:
+            response = await call_next(request)
+        finally:
+            request_id_context.reset(token)
+
+        response.headers[&quot;X-Request-ID&quot;] = request_id
+        response.headers[&quot;X-Process-Time&quot;] = f&quot;{time.perf_counter() - start:.4f}&quot;
+        return response
+
+
+class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
+    &quot;&quot;&quot;Small single-process limiter for MVP abuse protection.
+
+    Use a reverse proxy or managed edge limiter once traffic runs across multiple
+    API replicas.
+    &quot;&quot;&quot;
+
+    def __init__(self, app) -&gt; None:  # type: ignore[no-untyped-def]
+        super().__init__(app)
+        self.requests: defaultdict[str, deque[float]] = defaultdict(deque)
+
+    async def dispatch(self, request: Request, call_next: Callable) -&gt; Response:
+        if request.url.path in {&quot;/health&quot;, &quot;/ready&quot;}:
+            return await call_next(request)
+
+        now = time.monotonic()
+        client_ip = request.client.host if request.client else &quot;unknown&quot;
+        window = self.requests[client_ip]
+
+        while window and now - window[0] &gt; settings.RATE_LIMIT_WINDOW_SECONDS:
+            window.popleft()
+
+        if len(window) &gt;= settings.RATE_LIMIT_REQUESTS:
+            return Response(
+                content=&apos;{&quot;detail&quot;:&quot;Rate limit exceeded&quot;}&apos;,
+                media_type=&quot;application/json&quot;,
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        window.append(now)
+        return await call_next(request)
+
+</file>
+
+<file path="app/core/security.py">
+&quot;&quot;&quot;Password hashing and JWT token management.
+
+Functions are designed to be pure or minimal-dependency:
+- hash_password/verify_password: Pure password operations (using Argon2)
+- create/decode_token: Require settings injection (used via deps.py)
+&quot;&quot;&quot;
+
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+
+# Use Argon2 instead of bcrypt to avoid passlib/bcrypt compatibility issues
+pwd_context = CryptContext(schemes=[&quot;argon2&quot;], deprecated=&quot;auto&quot;)
+
+
+def hash_password(password: str) -&gt; str:
+    &quot;&quot;&quot;Hash password using argon2. Pure function, no dependencies.&quot;&quot;&quot;
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -&gt; bool:
+    &quot;&quot;&quot;Verify password against bcrypt hash. Pure function, no dependencies.&quot;&quot;&quot;
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def create_access_token(
+    data: dict[str, Any],
+    secret_key: str,
+    algorithm: str,
+    expires_delta: timedelta | None = None,
+) -&gt; str:
+    &quot;&quot;&quot;Create JWT access token.
+
+    Args:
+        data: Payload data to encode
+        secret_key: Secret key for signing
+        algorithm: JWT algorithm (e.g., &quot;HS256&quot;)
+        expires_delta: Optional expiration delta
+
+    Returns:
+        JWT token string
+    &quot;&quot;&quot;
+    expire = datetime.now(UTC) + (expires_delta or timedelta(minutes=30))
+    payload = data.copy()
+    payload.update({&quot;exp&quot;: expire})
+    return jwt.encode(payload, secret_key, algorithm=algorithm)
+
+
+def decode_token(token: str, secret_key: str, algorithm: str) -&gt; dict[str, Any] | None:
+    &quot;&quot;&quot;Decode and verify JWT token.
+
+    Args:
+        token: JWT token string
+        secret_key: Secret key for verification
+        algorithm: JWT algorithm (e.g., &quot;HS256&quot;)
+
+    Returns:
+        Decoded payload dict, or None if invalid
+    &quot;&quot;&quot;
+    try:
+        return jwt.decode(token, secret_key, algorithms=[algorithm])
+    except JWTError:
+        return None
+
+</file>
+
+<file path="app/core/__init__.py">
+
+</file>
+
+<file path="app/crud/crud_document.py">
+from typing import Any
+from sqlalchemy import select, desc
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.document import Document, DocumentStatus, DataCorrection
+from app.schemas.document import DataCorrectionCreate
+
+# ── FUNCIONES ORIGINALES DE DOCUMENTOS ───────────────────
+
+async def get_document_by_id(db: AsyncSession, document_id: str) -&gt; Document | None:
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    return result.scalars().first()
+
+async def get_user_documents(
+    db: AsyncSession,
+    user_id: str,
+    skip: int = 0,
+    limit: int = 100,
+) -&gt; list[Document]:
+    result = await db.execute(
+        select(Document)
+        .where(Document.user_id == user_id)
+        .order_by(Document.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+async def create_document(
+    db: AsyncSession,
+    user_id: str,
+    filename: str,
+    content_type: str | None,
+) -&gt; Document:
+    document = Document(
+        filename=filename,
+        content_type=content_type,
+        user_id=user_id,
+        status=DocumentStatus.PENDING,
+    )
+    db.add(document)
+    await db.commit()
+    await db.refresh(document)
+    return document
+
+async def update_document_status(
+    db: AsyncSession,
+    document_id: str,
+    status: DocumentStatus,
+    extracted_data: dict[str, Any] | None = None,
+    error_logs: str | None = None,
+) -&gt; Document | None:
+    document = await get_document_by_id(db, document_id)
+    if document is None:
+        return None
+    document.status = status
+    if extracted_data is not None:
+        document.extracted_data = extracted_data
+    if error_logs is not None:
+        document.error_logs = error_logs
+    await db.commit()
+    await db.refresh(document)
+    return document
+
+# ── NUEVA FUNCIÓN PARA APRENDIZAJE CONTINUO ──────────────
+
+async def create_data_correction(
+    db: AsyncSession,
+    document_id: str,
+    correction_in: DataCorrectionCreate,
+) -&gt; DataCorrection:
+    correction = DataCorrection(
+        document_id=document_id,
+        field_name=correction_in.field_name,
+        original_value=correction_in.original_value,
+        corrected_value=correction_in.corrected_value,
+        adapter_used=correction_in.adapter_used,
+    )
+    db.add(correction)
+    await db.commit()
+    await db.refresh(correction)
+    return correction
+
+async def get_recent_corrections(
+    db: AsyncSession,
+    user_id: str,
+    limit: int = 5,
+) -&gt; list[dict]:
+    stmt = (
+        select(DataCorrection)
+        .join(Document)
+        .where(Document.user_id == user_id)
+        .order_by(desc(DataCorrection.created_at))
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    corrections = result.scalars().all()
+    return [
+        {
+            &quot;field_name&quot;: c.field_name,
+            &quot;original_value&quot;: c.original_value,
+            &quot;corrected_value&quot;: c.corrected_value,
+            &quot;adapter_used&quot;: c.adapter_used,
+        }
+        for c in corrections
+    ]
+</file>
+
+<file path="app/crud/crud_user.py">
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.security import hash_password, verify_password
+from app.models.user import User
+
+
+async def get_user_by_email(db: AsyncSession, email: str) -&gt; User | None:
+    result = await db.execute(select(User).where(User.email == email.lower()))
+    return result.scalars().first()
+
+
+async def get_user_by_id(db: AsyncSession, user_id: str) -&gt; User | None:
+    result = await db.execute(select(User).where(User.id == user_id))
+    return result.scalars().first()
+
+
+async def create_user(
+    db: AsyncSession,
+    email: str,
+    password: str,
+    full_name: str | None = None,
+) -&gt; User:
+    user = User(
+        email=email.lower(),
+        hashed_password=hash_password(password),
+        full_name=full_name,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+async def authenticate_user(db: AsyncSession, email: str, password: str) -&gt; User | None:
+    user = await get_user_by_email(db, email)
+    if user is None or not verify_password(password, user.hashed_password):
+        return None
+    return user
+
+</file>
+
+<file path="app/crud/__init__.py">
+
+</file>
+
+<file path="app/main.py">
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from app.api.v1 import auth, documents
+from app.core.config import get_settings
+from app.core.database import build_engine, build_session_maker
+from app.core.logging import configure_logging
+from app.core.middleware import (
+    InMemoryRateLimitMiddleware,
+    RequestContextMiddleware,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def create_app() -&gt; FastAPI:
+    &quot;&quot;&quot;Create and configure FastAPI application.
+
+    The app is created with a proper lifespan context that:
+    - Initializes database engine and session factory on startup
+    - Stores them in app.state for dependency injection
+    - Properly disposes resources on shutdown
+    &quot;&quot;&quot;
+    # Load settings once during app creation
+    settings = get_settings()
+
+    configure_logging(settings.LOG_LEVEL)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -&gt; AsyncIterator[None]:
+        &quot;&quot;&quot;Manage application lifecycle.
+
+        Startup:
+        - Create database engine
+        - Create session factory
+        - Store in app.state for dependency injection
+
+        Shutdown:
+        - Dispose database engine
+        - Clean up resources
+        &quot;&quot;&quot;
+        logger.info(&quot;Starting %s %s&quot;, settings.APP_TITLE, settings.APP_VERSION)
+
+        # Initialize database during startup
+        engine = build_engine(settings)
+        session_maker = build_session_maker(engine)
+
+        # Store in app.state for dependency injection
+        app.state.engine = engine
+        app.state.session_maker = session_maker
+
+        logger.info(&quot;Database initialized: %s&quot;, settings.DATABASE_URL)
+
+        yield
+
+        # Cleanup on shutdown
+        logger.info(&quot;Shutting down application&quot;)
+        await engine.dispose()
+        logger.info(&quot;Application shutdown complete&quot;)
+
+    app = FastAPI(
+        title=settings.APP_TITLE,
+        description=&quot;Document automation API for logistics operations.&quot;,
+        version=settings.APP_VERSION,
+        openapi_url=&quot;/api/openapi.json&quot; if settings.DEBUG else None,
+        docs_url=&quot;/api/docs&quot; if settings.DEBUG else None,
+        redoc_url=&quot;/api/redoc&quot; if settings.DEBUG else None,
+        lifespan=lifespan,
+    )
+
+    # Add middleware
+    app.add_middleware(InMemoryRateLimitMiddleware)
+    app.add_middleware(RequestContextMiddleware)
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=[&quot;GET&quot;, &quot;POST&quot;, &quot;OPTIONS&quot;],
+        allow_headers=[&quot;Authorization&quot;, &quot;Content-Type&quot;, &quot;X-Request-ID&quot;],
+    )
+
+    # Include routers
+    app.include_router(auth.router, prefix=&quot;/api/v1/auth&quot;, tags=[&quot;auth&quot;])
+    app.include_router(documents.router, prefix=&quot;/api/v1/documents&quot;, tags=[&quot;documents&quot;])
+
+    # Global exception handler
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception) -&gt; JSONResponse:
+        logger.exception(&quot;Unhandled error %s %s&quot;, request.method, request.url.path)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={&quot;detail&quot;: &quot;Internal server error&quot;},
+        )
+
+    # Health check endpoints
+    @app.get(&quot;/health&quot;)
+    async def health() -&gt; dict[str, str]:
+        return {&quot;status&quot;: &quot;ok&quot;, &quot;version&quot;: settings.APP_VERSION}
+
+    @app.get(&quot;/ready&quot;)
+    async def ready() -&gt; dict[str, str]:
+        return {&quot;status&quot;: &quot;ready&quot;}
+
+    @app.get(&quot;/&quot;)
+    async def root() -&gt; dict[str, str]:
+        return {
+            &quot;name&quot;: settings.APP_TITLE,
+            &quot;docs&quot;: &quot;/api/docs&quot;,
+            &quot;health&quot;: &quot;/health&quot;,
+        }
+
+    return app
+
+
+app = create_app()
+
+</file>
+
+<file path="app/models/base.py">
+import uuid
+from datetime import datetime
+
+from sqlalchemy import DateTime, String, func
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class BaseModel(Base):
+    &quot;&quot;&quot;Common UUID and timestamp columns.&quot;&quot;&quot;
+
+    __abstract__ = True
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+</file>
+
+<file path="app/models/document.py">
+from __future__ import annotations
+
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
+
+from sqlalchemy import JSON, Enum, ForeignKey, Index, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import BaseModel
+
+if TYPE_CHECKING:
+    from app.models.user import User
+
+
+class DocumentStatus(StrEnum):
+    PENDING = &quot;PENDING&quot;
+    PROCESSING = &quot;PROCESSING&quot;
+    EXTRACTED = &quot;EXTRACTED&quot;
+    FAILED = &quot;FAILED&quot;
+    NEEDS_REVIEW = &quot;NEEDS_REVIEW&quot;  # &lt;-- NUEVO ESTADO PARA EL FLUJO DE AUDITORÍA SAAS
+
+
+class Document(BaseModel):
+    __tablename__ = &quot;documents&quot;
+    __table_args__ = (
+        Index(&quot;idx_documents_user_id&quot;, &quot;user_id&quot;),
+        Index(&quot;idx_documents_status&quot;, &quot;status&quot;),
+    )
+
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status: Mapped[DocumentStatus] = mapped_column(
+        Enum(DocumentStatus, native_enum=False, length=30), # length añadido por seguridad
+        default=DocumentStatus.PENDING,
+        nullable=False,
+    )
+    # Aquí se guardan los datos dinámicos extraídos por los Adaptadores (JSONB en Postgres)
+    extracted_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error_logs: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey(&quot;users.id&quot;), nullable=False)
+
+    user: Mapped[User] = relationship(back_populates=&quot;documents&quot;)
+    
+    # NUEVA RELACIÓN: Un documento puede tener múltiples correcciones hechas por humanos
+    corrections: Mapped[list[DataCorrection]] = relationship(
+        back_populates=&quot;document&quot;, cascade=&quot;all, delete-orphan&quot;
+    )
+
+    def __repr__(self) -&gt; str:
+        return f&quot;&lt;Document id={self.id} filename={self.filename} status={self.status}&gt;&quot;
+
+
+# ==========================================
+# NUEVA TABLA: APRENDIZAJE Y RETROALIMENTACIÓN
+# ==========================================
+class DataCorrection(BaseModel):
+    &quot;&quot;&quot;
+    Registra las correcciones manuales hechas por los usuarios.
+    Permite calcular precisión (accuracy) y re-entrenar modelos o mejorar Regex en el futuro.
+    &quot;&quot;&quot;
+    __tablename__ = &quot;data_corrections&quot;
+    __table_args__ = (
+        Index(&quot;idx_corrections_document_id&quot;, &quot;document_id&quot;),
+    )
+
+    document_id: Mapped[str] = mapped_column(String(36), ForeignKey(&quot;documents.id&quot;), nullable=False)
+    
+    # Ej: &quot;patente_camion&quot;, &quot;numero_guia&quot;
+    field_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    
+    # Lo que la IA o el Regex creyó que era correcto
+    original_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # Lo que el usuario humano ingresó como verdad absoluta
+    corrected_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # Para saber a qué adaptador echarle la culpa y mejorar sus reglas
+    adapter_used: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    document: Mapped[Document] = relationship(back_populates=&quot;corrections&quot;)
+
+    def __repr__(self) -&gt; str:
+        return f&quot;&lt;DataCorrection doc={self.document_id} field={self.field_name}&gt;&quot;
+</file>
+
+<file path="app/models/user.py">
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from sqlalchemy import Boolean, Index, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import BaseModel
+
+if TYPE_CHECKING:
+    from app.models.document import Document
+
+
+class User(BaseModel):
+    __tablename__ = &quot;users&quot;
+    __table_args__ = (Index(&quot;idx_users_email&quot;, &quot;email&quot;),)
+
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    documents: Mapped[list[Document]] = relationship(back_populates=&quot;user&quot;)
+
+    def __repr__(self) -&gt; str:
+        return f&quot;&lt;User id={self.id} email={self.email}&gt;&quot;
+
+</file>
+
+<file path="app/models/__init__.py">
+# app/models/__init__.py
+from app.models.base import Base
+from app.models.document import Document, DocumentStatus, DataCorrection  # &lt;-- DataCorrection debe estar aquí
+from app.models.user import User
+
+__all__ = [&quot;Base&quot;, &quot;Document&quot;, &quot;DocumentStatus&quot;, &quot;DataCorrection&quot;, &quot;User&quot;]
+</file>
+
+<file path="app/schemas/document.py">
+# app/schemas/document.py
+from pydantic import BaseModel, ConfigDict
+from typing import Optional
+from datetime import datetime
+from enum import Enum
+from app.schemas.extraction import ExtractedLogisticsData
+
+class DocumentStatus(str, Enum):
+    PENDING = &quot;PENDING&quot;
+    PROCESSING = &quot;PROCESSING&quot;
+    EXTRACTED = &quot;EXTRACTED&quot;
+    FAILED = &quot;FAILED&quot;
+    # NUEVO ESTADO: Si el confidence_score es bajo, pausamos para corrección humana
+    NEEDS_REVIEW = &quot;NEEDS_REVIEW&quot; 
+
+class DocumentResponse(BaseModel):
+    id: str
+    filename: str
+    content_type: Optional[str] = None
+    status: DocumentStatus
+    extracted_data: Optional[ExtractedLogisticsData] = None
+    error_logs: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    # Permite a Pydantic leer directamente desde los modelos SQLAlchemy (ORM)
+    model_config = ConfigDict(from_attributes=True)
+    
+class DataCorrectionCreate(BaseModel):
+    &quot;&quot;&quot;Esquema para recibir la corrección desde el frontend (Next.js)&quot;&quot;&quot;
+    field_name: str
+    original_value: Optional[str] = None
+    corrected_value: str
+    adapter_used: Optional[str] = None
+
+class DataCorrectionResponse(BaseModel):
+    &quot;&quot;&quot;Esquema para devolver la corrección guardada como confirmación&quot;&quot;&quot;
+    id: str
+    document_id: str
+    field_name: str
+    original_value: Optional[str] = None
+    corrected_value: Optional[str] = None
+    adapter_used: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+</file>
+
+<file path="app/schemas/extraction.py">
+# app/schemas/extraction.py
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional
+
+class ExtractedLogisticsData(BaseModel):
+    &quot;&quot;&quot;
+    Modelo base para los datos extraídos. 
+    Contiene los campos estándar, pero permite campos adicionales dinámicamente.
+    &quot;&quot;&quot;
+    # Campos base esperados por tu frontend actual (Next.js)
+    origen: Optional[str] = None
+    destino: Optional[str] = None
+    patente_camion: Optional[str] = None
+    chofer: Optional[str] = None
+    fecha_despacho: Optional[str] = None
+    numero_guia: Optional[str] = None
+    observaciones: Optional[str] = None
+
+    # Nuevos campos de Auditoría SaaS
+    adapter_used: Optional[str] = Field(
+        default=None, 
+        description=&quot;El adaptador específico o de IA que procesó este documento&quot;
+    )
+    confidence_score: Optional[float] = Field(
+        default=None, 
+        description=&quot;Puntaje de precisión (0-100) para determinar si requiere revisión manual&quot;
+    )
+
+    # MAGIA DE ARQUITECTO: Esto permite que si el StarkenAdapter extrae un campo 
+    # llamado &quot;peso_carga&quot;, Pydantic no lance un error y lo incluya en el JSON de respuesta.
+    model_config = ConfigDict(extra=&apos;allow&apos;)
+</file>
+
+<file path="app/schemas/token.py">
+from pydantic import BaseModel
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = &quot;bearer&quot;
+
+
+class TokenData(BaseModel):
+    sub: str
+    exp: int
+
+</file>
+
+<file path="app/schemas/user.py">
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    full_name: str | None = Field(default=None, max_length=255)
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class UserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    email: str
+    full_name: str | None
+    is_active: bool
+    created_at: datetime
+
+</file>
+
+<file path="app/schemas/__init__.py">
+
+</file>
+
+<file path="app/services/document_extractor.py">
+&quot;&quot;&quot;
+Orquestador de extracción para LogisParse SaaS.
+1. Extrae texto crudo (OCR / PDF).
+2. Limpia el texto (elimina basura de tablas, encabezados, etc.).
+3. Delega al AdapterFactory para enrutamiento inteligente.
+4. Valida semánticamente los campos extraídos.
+5. Soporta aprendizaje continuo a través de correction_history.
+&quot;&quot;&quot;
+
+import logging
+import re
+from io import BytesIO
+from typing import Any
+
+from app.core.config import Settings
+from app.schemas.extraction import ExtractedLogisticsData
+from app.services.extractors.adapter_factory import AdapterFactory
+from app.services.extractors.generic_llm_adapter import GenericLLMAdapter
+
+logger = logging.getLogger(__name__)
+
+# ----------------------------------------------
+# LIMPIEZA DE TEXTO
+# ----------------------------------------------
+def clean_extracted_text(text: str) -&gt; str:
+    &quot;&quot;&quot;
+    Elimina líneas que parecen ruido: encabezados de tabla, líneas con solo números,
+    líneas con mayúsculas sostenidas (ej. &quot;CONCEPTO&quot;, &quot;PORCENTAJE&quot;), etc.
+    &quot;&quot;&quot;
+    lines = text.split(&apos;\n&apos;)
+    cleaned = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # Saltar líneas que son solo números, guiones, barras, etc.
+        if re.match(r&apos;^[\d\s\-\/\.\,\%\$]+$&apos;, line):
+            continue
+        # Saltar líneas en mayúsculas que parecen encabezados de tabla (más de 4 letras mayúsculas)
+        if re.match(r&apos;^[A-Z\s]{5,}$&apos;, line):
+            continue
+        # Saltar líneas que empiezan con &quot;PAGO CON&quot;, &quot;CONCEPTO&quot;, etc.
+        if re.match(r&apos;^(PAGO|CONCEPTO|PORCENTAJE|CÁLCULO|RETENCIONES)&apos;, line, re.IGNORECASE):
+            continue
+        # Saltar líneas que son etiquetas de tabla como &quot;Seguro Invalidez...&quot; (pero las dejamos si tienen información útil)
+        # Mejor: si la línea tiene una etiqueta larga sin dos puntos, la saltamos
+        if &apos;:&apos; not in line and len(line.split()) &gt; 5:
+            continue
+        cleaned.append(line)
+    return &apos;\n&apos;.join(cleaned)
+
+# ----------------------------------------------
+# VALIDACIÓN SEMÁNTICA DE CAMPOS
+# ----------------------------------------------
+def validate_extracted_data(data: dict[str, Any]) -&gt; dict[str, Any]:
+    &quot;&quot;&quot;
+    Valida cada campo extraído y lo deja como None si no cumple con el formato esperado.
+    &quot;&quot;&quot;
+    # Lista de ciudades chilenas comunes (puedes expandirla)
+    CIUDADES_CHILENAS = [
+        &quot;Santiago&quot;, &quot;Puerto Montt&quot;, &quot;Concepción&quot;, &quot;Valparaíso&quot;, &quot;Viña del Mar&quot;,
+        &quot;Antofagasta&quot;, &quot;Temuco&quot;, &quot;Rancagua&quot;, &quot;Talca&quot;, &quot;Chillán&quot;, &quot;Los Ángeles&quot;,
+        &quot;Coyhaique&quot;, &quot;Punta Arenas&quot;, &quot;Iquique&quot;, &quot;Arica&quot;, &quot;Calama&quot;, &quot;Copiapó&quot;,
+        &quot;La Serena&quot;, &quot;Coquimbo&quot;, &quot;Valdivia&quot;, &quot;Osorno&quot;, &quot;Castro&quot;, &quot;Ancud&quot;
+    ]
+    # Normalizar: convertir a título (primera letra mayúscula, resto minúscula)
+    def normalize_city(name: str) -&gt; str:
+        return &apos; &apos;.join(word.capitalize() for word in name.lower().split())
+
+    validated = {}
+    
+    for campo, valor in data.items():
+        if not valor or not isinstance(valor, str) or len(valor.strip()) &lt; 2:
+            validated[campo] = None
+            continue
+        
+        valor = valor.strip()
+        
+        if campo in (&quot;origen&quot;, &quot;destino&quot;):
+            # Debe ser un nombre de ciudad (solo letras y espacios, no más de 3 palabras)
+            if re.match(r&apos;^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2}$&apos;, valor):
+                # Verificar si está en la lista de ciudades (o al menos que parezca ciudad)
+                # Si no está, la normalizamos a título y la aceptamos igual
+                validated[campo] = normalize_city(valor)
+            else:
+                validated[campo] = None
+        
+        elif campo == &quot;chofer&quot;:
+            # Debe ser nombre y apellido (dos palabras con mayúscula)
+            if re.match(r&apos;^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$&apos;, valor):
+                validated[campo] = valor
+            else:
+                validated[campo] = None
+        
+        elif campo == &quot;fecha_despacho&quot;:
+            # Formato dd/mm/aaaa o aaaa-mm-dd
+            if re.match(r&apos;^\d{2}/\d{2}/\d{4}$&apos;, valor) or re.match(r&apos;^\d{4}-\d{2}-\d{2}$&apos;, valor):
+                validated[campo] = valor
+            else:
+                validated[campo] = None
+        
+        elif campo == &quot;numero_guia&quot;:
+            # Solo números
+            if re.match(r&apos;^\d+$&apos;, valor):
+                validated[campo] = valor
+            else:
+                validated[campo] = None
+        
+        elif campo == &quot;patente_camion&quot;:
+            # Formato XX-XX-12 o XX-1234 (o sin guiones)
+            if re.match(r&apos;^[A-Z]{2}-?[A-Z]{2}-?\d{2}$&apos;, valor) or re.match(r&apos;^[A-Z]{2}-?\d{4}$&apos;, valor):
+                validated[campo] = valor.upper()
+            else:
+                validated[campo] = None
+        
+        else:
+            # Otros campos: se pasan tal cual
+            validated[campo] = valor
+    
+    return validated
+
+# ----------------------------------------------
+# EXTRACCIÓN DE TEXTO
+# ----------------------------------------------
+def extract_text_from_pdf(file_bytes: bytes) -&gt; str:
+    try:
+        import pdfplumber
+    except ImportError:
+        logger.warning(&quot;pdfplumber not installed&quot;)
+        return &quot;&quot;
+
+    try:
+        text = []
+        with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text.append(page_text)
+        return &quot;\n&quot;.join(text)
+    except Exception:
+        logger.exception(&quot;PDF extraction failed&quot;)
+        return &quot;&quot;
+
+def extract_text_from_image(file_bytes: bytes) -&gt; str:
+    try:
+        import pytesseract
+        from PIL import Image
+    except ImportError:
+        logger.warning(&quot;OCR dependencies missing&quot;)
+        return &quot;&quot;
+
+    try:
+        img = Image.open(BytesIO(file_bytes))
+        return pytesseract.image_to_string(img, lang=&quot;spa&quot;)
+    except Exception:
+        logger.exception(&quot;Image OCR failed&quot;)
+        return &quot;&quot;
+
+def extract_text(file_bytes: bytes, content_type: str) -&gt; str:
+    if content_type == &quot;application/pdf&quot;:
+        return extract_text_from_pdf(file_bytes)
+    if content_type in (&quot;image/png&quot;, &quot;image/jpeg&quot;, &quot;image/jpg&quot;):
+        return extract_text_from_image(file_bytes)
+    return &quot;&quot;
+
+# ----------------------------------------------
+# ORQUESTADOR PRINCIPAL
+# ----------------------------------------------
+async def extract_document(
+    file_bytes: bytes,
+    filename: str,
+    content_type: str,
+    settings: Settings,
+    correction_history: list[dict] | None = None,
+) -&gt; ExtractedLogisticsData:
+    
+    if len(file_bytes) &lt; 20:
+        raise ValueError(&quot;file too small&quot;)
+
+    # 1. Extraer texto crudo
+    text = extract_text(file_bytes, content_type)
+    if not text:
+        logger.info(&quot;No text extracted from %s&quot;, filename)
+        return ExtractedLogisticsData(confidence_score=0.0, adapter_used=&quot;None&quot;)
+
+    # 2. Limpiar el texto (eliminar ruido)
+    cleaned_text = clean_extracted_text(text)
+    logger.debug(&quot;Texto limpio (primeros 200 chars): %s&quot;, cleaned_text[:200])
+
+    # 3. Obtener adaptador según clasificación
+    adapter = AdapterFactory.get_adapter(cleaned_text)
+
+    # 4. Extracción inicial
+    raw_data = await adapter.extract_data(
+        cleaned_text,
+        image_bytes=file_bytes,
+        settings=settings,
+        correction_history=correction_history,
+    )
+
+    # 5. Validación semántica de los campos extraídos
+    raw_data = validate_extracted_data(raw_data)
+
+    # 6. Calcular confianza
+    score = adapter.calculate_confidence(raw_data)
+    
+    # 7. Si confianza baja o faltan críticos, enriquecer con IA
+    campos_criticos = [&quot;numero_guia&quot;, &quot;patente_camion&quot;]
+    faltan_criticos = any(not raw_data.get(campo) for campo in campos_criticos)
+    
+    if (score &lt; 70 or faltan_criticos) and not isinstance(adapter, GenericLLMAdapter):
+        logger.info(&quot;Confianza baja (%s) o faltan críticos. Enriqueciendo con IA genérica.&quot;, score)
+        generic_adapter = GenericLLMAdapter()
+        ai_data = await generic_adapter.extract_data(
+            cleaned_text,
+            image_bytes=file_bytes,
+            settings=settings,
+            correction_history=correction_history,
+        )
+        
+        # Fusionar: los valores de la IA solo se usan si el adaptador específico no los tiene
+        for key, value in ai_data.items():
+            valor_actual = raw_data.get(key)
+            if not valor_actual or (isinstance(valor_actual, str) and len(valor_actual.split()) &gt; 3):
+                if isinstance(value, str) and len(value.split()) &gt; 3:
+                    continue
+                raw_data[key] = value
+        
+        # Re-validar después de la fusión
+        raw_data = validate_extracted_data(raw_data)
+        
+        raw_data[&quot;adapter_used&quot;] = f&quot;{adapter.__class__.__name__} + GenericLLM&quot;
+        score = adapter.calculate_confidence(raw_data)
+        raw_data[&quot;confidence_score&quot;] = score
+        logger.info(&quot;Confianza después de enriquecimiento: %s&quot;, score)
+    else:
+        raw_data[&quot;confidence_score&quot;] = score
+        if &quot;adapter_used&quot; not in raw_data:
+            raw_data[&quot;adapter_used&quot;] = adapter.__class__.__name__
+
+    logger.info(&quot;Extracción finalizada. Adaptador: %s | Confianza: %s&quot;, raw_data.get(&quot;adapter_used&quot;), score)
+
+    return ExtractedLogisticsData(**raw_data)
+</file>
+
+<file path="app/services/extractors/adapter_factory.py">
+# app/services/extractors/adapter_factory.py
+from app.services.extractors.base_adapter import BaseAdapter
+from app.services.extractors.specific.starken_adapter import StarkenAdapter
+from app.services.extractors.generic_llm_adapter import GenericLLMAdapter
+
+class DocumentClassifier:
+    @staticmethod
+    def identify_company(text: str) -&gt; str:
+        &quot;&quot;&quot;Clasificador rudimentario. En el futuro puede ser un modelo ML pequeño.&quot;&quot;&quot;
+        text_upper = text.upper()
+        if &quot;STARKEN&quot; in text_upper or &quot;TURBUS&quot; in text_upper:
+            return &quot;starken&quot;
+        # Si no detecta nada conocido...
+        return &quot;unknown&quot;
+
+class AdapterFactory:
+    @staticmethod
+    def get_adapter(text: str) -&gt; BaseAdapter:
+        # 1. Primero clasificamos
+        company_id = DocumentClassifier.identify_company(text)
+        
+        # 2. Seleccionamos el adaptador correcto
+        adapters = {
+            &quot;starken&quot;: StarkenAdapter(),
+            # &quot;ccu&quot;: CCUAdapter(),
+            # &quot;dhl&quot;: DHLAdapter(),
+        }
+        
+        # Si la empresa existe en el diccionario, retorna ese adaptador. 
+        # Si no (&apos;unknown&apos;), retorna el GenericLLMAdapter.
+        return adapters.get(company_id, GenericLLMAdapter())
+</file>
+
+<file path="app/services/extractors/base_adapter.py">
+from abc import ABC, abstractmethod
+from typing import Dict, Any, Optional
+
+class BaseAdapter(ABC):
+    @abstractmethod
+    async def extract_data(
+        self,
+        text: str,
+        image_bytes: bytes | None = None,
+        settings: Any = None,
+        correction_history: list[dict] | None = None,   # &lt;-- AÑADIR
+    ) -&gt; Dict[str, Any]:
+        pass
+
+    @abstractmethod
+    def calculate_confidence(self, extracted_data: Dict[str, Any]) -&gt; float:
+        pass
+</file>
+
+<file path="app/services/extractors/generic_llm_adapter.py">
+from typing import Dict, Any, Optional
+import logging
+from app.services.extractors.base_adapter import BaseAdapter
+from app.schemas.extraction import ExtractedLogisticsData
+
+logger = logging.getLogger(__name__)
+
+class GenericLLMAdapter(BaseAdapter):
+    
+    async def extract_data(
+        self,
+        text: str,
+        image_bytes: bytes | None = None,
+        settings: Any = None,
+        correction_history: list[dict] | None = None,
+    ) -&gt; Dict[str, Any]:
+        from openai import AsyncOpenAI
+        
+        if not settings or not settings.OPENAI_API_KEY:
+            logger.warning(&quot;OPENAI_API_KEY no encontrada. Devolviendo JSON mockeado.&quot;)
+            return {
+                &quot;origen&quot;: None,
+                &quot;destino&quot;: None,
+                &quot;adapter_used&quot;: &quot;GenericLLMAdapter (Fallo API)&quot;
+            }
+
+        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+
+        # Prompt mejorado: instrucciones estrictas y claras
+        system_prompt = (
+            &quot;Eres un experto en documentos logísticos y tributarios chilenos. &quot;
+            &quot;Extrae SOLO los siguientes campos: origen, destino, patente_camion, chofer, fecha_despacho, numero_guia. &quot;
+            &quot;SI UN CAMPO NO APARECE EXPLÍCITAMENTE EN EL TEXTO, DEVUELVE null. &quot;
+            &quot;NO INVENTES INFORMACIÓN. NO USES FRASES LARGAS. &quot;
+            &quot;Para origen y destino, usa nombres de ciudades chilenas (ej: Santiago, Puerto Montt, Concepción). &quot;
+            &quot;Para chofer, usa nombre y apellido (ej: Juan Pérez). &quot;
+            &quot;Para patente, usa formato XX-XX-12 o XX-1234. &quot;
+            &quot;Para número de guía, usa solo números.&quot;
+        )
+
+        user_content = f&quot;Texto del documento:\n{text[:2000]}&quot;
+
+        # Inyección de correcciones previas (Few-Shot)
+        if correction_history:
+            examples = &quot;\n&quot;.join([
+                f&quot;Corrección previa: Campo &apos;{c[&apos;field_name&apos;]}&apos; fue corregido de &apos;{c[&apos;original_value&apos;]}&apos; a &apos;{c[&apos;corrected_value&apos;]}&apos;.&quot;
+                for c in correction_history[:5]
+            ])
+            user_content += f&quot;\n\nContexto de correcciones previas:\n{examples}\nTen en cuenta estas correcciones al extraer.&quot;
+
+        input_messages: list[Any] = [
+            {&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: system_prompt},
+            {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: user_content},
+        ]
+
+        try:
+            response = await client.beta.chat.completions.parse(
+                model=settings.OPENAI_MODEL,
+                messages=input_messages,
+                response_format=ExtractedLogisticsData,
+                temperature=0,
+            )
+            
+            parsed_data = response.choices[0].message.parsed
+            
+            if not parsed_data:
+                logger.error(&quot;OpenAI falló al estructurar la respuesta (parsed es None).&quot;)
+                return {&quot;adapter_used&quot;: &quot;GenericLLMAdapter (Error de Parseo)&quot;}
+            
+            ai_data = parsed_data.model_dump()
+            ai_data[&quot;adapter_used&quot;] = &quot;GenericLLMAdapter (OpenAI)&quot;
+            return ai_data
+            
+        except Exception as e:
+            logger.exception(&quot;Fallo en la llamada a OpenAI&quot;)
+            return {&quot;adapter_used&quot;: f&quot;GenericLLMAdapter (Error: {str(e)})&quot;}
+
+    def calculate_confidence(self, extracted_data: Dict[str, Any]) -&gt; float:
+        score = 85.0 
+        if not extracted_data.get(&quot;patente_camion&quot;):
+            score -= 20.0
+        if not extracted_data.get(&quot;numero_guia&quot;):
+            score -= 20.0
+        return max(score, 0.0)
+</file>
+
+<file path="app/services/extractors/specific/starken_adapter.py">
+import re
+from typing import Dict, Any, Optional
+from app.services.extractors.base_adapter import BaseAdapter
+
+class StarkenAdapter(BaseAdapter):
+    
+    async def extract_data(
+        self,
+        text: str,
+        image_bytes: bytes | None = None,
+        settings: Any = None,
+        correction_history: list[dict] | None = None,
+    ) -&gt; Dict[str, Any]:
+        # Patrones mejorados:
+        # - Origen/Destino: capturan nombres de ciudades con mayúscula y acentos, máximo 3 palabras
+        # - Chofer: nombre y apellido (dos palabras con mayúscula)
+        # - Fecha: formato dd/mm/aaaa o aaaa-mm-dd
+        # - Guía: número después de &quot;Guía&quot;, &quot;GDE&quot;, etc.
+        # - Patente: evita capturar &quot;GDE-2026&quot; usando negative lookbehind
+        patrones = {
+            &quot;origen&quot;: re.compile(
+                r&apos;(?:Origen|Origen Detallado):\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})&apos;,
+                re.IGNORECASE
+            ),
+            &quot;destino&quot;: re.compile(
+                r&apos;(?:Destino|Destino Detallado):\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})&apos;,
+                re.IGNORECASE
+            ),
+            &quot;chofer&quot;: re.compile(
+                r&apos;(?:Chofer|Conductor):\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)&apos;,
+                re.IGNORECASE
+            ),
+            &quot;fecha_despacho&quot;: re.compile(
+                r&apos;(?:Fecha(?: de Salida)?|FchEmis):\s*(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})&apos;,
+                re.IGNORECASE
+            ),
+            &quot;numero_guia&quot;: re.compile(
+                r&apos;(?:Guía|GUIA|GDE)\s*(?:N°|Nº|Nro\.?)?\s*(\d+)&apos;,
+                re.IGNORECASE
+            ),
+            &quot;patente_camion&quot;: re.compile(
+                r&apos;(?&lt;!GDE-)([A-Z]{2}-?[A-Z]{2}-?\d{2}|[A-Z]{2}-?\d{4})&apos;,
+                re.IGNORECASE
+            ),
+        }
+        
+        extracted = {}
+        for key, pattern in patrones.items():
+            match = pattern.search(text)
+            if match:
+                value = match.group(1).strip()
+                extracted[key] = value if value else None
+            else:
+                extracted[key] = None
+        
+        # Si no se encontró origen, intentar buscar con &quot;Desde:&quot; o similar
+        if not extracted.get(&quot;origen&quot;):
+            fallback = re.search(r&apos;(?:Desde|Origen):?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})&apos;, text, re.IGNORECASE)
+            if fallback:
+                extracted[&quot;origen&quot;] = fallback.group(1).strip()
+        
+        extracted[&quot;adapter_used&quot;] = &quot;StarkenAdapter&quot;
+        return extracted
+
+    def calculate_confidence(self, extracted_data: Dict[str, Any]) -&gt; float:
+        # Pesos para cada campo (solo si el valor es válido)
+        pesos = {
+            &quot;origen&quot;: 0.15,
+            &quot;destino&quot;: 0.20,
+            &quot;chofer&quot;: 0.15,
+            &quot;fecha_despacho&quot;: 0.15,
+            &quot;numero_guia&quot;: 0.20,
+            &quot;patente_camion&quot;: 0.15,
+        }
+        score = 0.0
+        for campo, peso in pesos.items():
+            valor = extracted_data.get(campo)
+            # Validación simple: no debe ser None, no debe ser string vacío, y para origen/destino no debe tener más de 3 palabras
+            if valor and isinstance(valor, str) and len(valor) &gt; 1:
+                if campo in (&quot;origen&quot;, &quot;destino&quot;) and len(valor.split()) &gt; 3:
+                    continue
+                score += peso * 100
+        return min(score, 100.0)
+</file>
+
+<file path="app/services/upload_validation.py">
+from pathlib import Path
+
+from fastapi import HTTPException, UploadFile, status
+
+from app.core.config import settings
+
+PDF_MAGIC = b&quot;%PDF&quot;
+JPEG_MAGIC = b&quot;\xff\xd8\xff&quot;
+PNG_MAGIC = b&quot;\x89PNG\r\n\x1a\n&quot;
+
+
+def sanitize_filename(filename: str | None) -&gt; str:
+    if not filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=&quot;File name is required&quot;,
+        )
+    return Path(filename).name.replace(&quot;\x00&quot;, &quot;&quot;).strip()
+
+
+def detect_content_type(file_bytes: bytes) -&gt; str:
+    if file_bytes.startswith(PDF_MAGIC):
+        return &quot;application/pdf&quot;
+    if file_bytes.startswith(JPEG_MAGIC):
+        return &quot;image/jpeg&quot;
+    if file_bytes.startswith(PNG_MAGIC):
+        return &quot;image/png&quot;
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=&quot;Unsupported or invalid file content&quot;,
+    )
+
+
+async def read_and_validate_upload(file: UploadFile) -&gt; tuple[str, str, bytes]:
+    filename = sanitize_filename(file.filename)
+    extension = Path(filename).suffix.lower().lstrip(&quot;.&quot;)
+    allowed_extensions = {item.lower() for item in settings.ALLOWED_EXTENSIONS}
+
+    if extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f&quot;Unsupported file extension. Allowed: {&apos;, &apos;.join(sorted(allowed_extensions))}&quot;,
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=&quot;File is empty&quot;)
+
+    if len(content) &gt; settings.max_file_size_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f&quot;File exceeds {settings.MAX_FILE_SIZE_MB}MB limit&quot;,
+        )
+
+    content_type = detect_content_type(content)
+    extension_content_map = {
+        &quot;pdf&quot;: &quot;application/pdf&quot;,
+        &quot;jpg&quot;: &quot;image/jpeg&quot;,
+        &quot;jpeg&quot;: &quot;image/jpeg&quot;,
+        &quot;png&quot;: &quot;image/png&quot;,
+    }
+    if extension_content_map.get(extension) != content_type:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=&quot;File extension does not match its content&quot;,
+        )
+
+    return filename, content_type, content
+
+</file>
+
+<file path="app/services/__init__.py">
+
+</file>
+
+<file path="app/__init__.py">
+# App initialization
+__version__ = &quot;0.1.0&quot;
+__author__ = &quot;LogisParse Team&quot;
+
+</file>
+
+<file path="migrations/env.py">
+import asyncio
+import sys
+from logging.config import fileConfig
+from pathlib import Path
+
+from sqlalchemy import pool
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import async_engine_from_config, create_async_engine
+
+from alembic import context
+
+# Agregar el directorio raíz al path para poder importar app
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from app.core.config import settings
+from app.models import Base
+
+# Configurar logging
+if context.config.config_file_name is not None:
+    fileConfig(context.config.config_file_name)
+
+# Configurar la URL de la base de datos
+config = context.config
+config.set_main_option(&quot;sqlalchemy.url&quot;, settings.DATABASE_URL)
+
+target_metadata = Base.metadata
+
+
+def run_migrations_offline() -&gt; None:
+    &quot;&quot;&quot;Ejecutar migraciones en modo offline.&quot;&quot;&quot;
+    context.configure(
+        url=settings.DATABASE_URL,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={&quot;paramstyle&quot;: &quot;named&quot;},
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def do_run_migrations(connection: Connection) -&gt; None:
+    &quot;&quot;&quot;Ejecutar migraciones con una conexión dada.&quot;&quot;&quot;
+    context.configure(connection=connection, target_metadata=target_metadata)
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_async_migrations() -&gt; None:
+    &quot;&quot;&quot;Ejecutar migraciones en modo asíncrono con NullPool.&quot;&quot;&quot;
+    # Crear el engine con NullPool y statement_cache_size=0
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        poolclass=pool.NullPool,  # &lt;-- Cada conexión es nueva
+        connect_args={&quot;statement_cache_size&quot;: 0},  # &lt;-- Deshabilitar prepared statements
+        echo=False,
+    )
+
+    async with engine.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+
+    await engine.dispose()
+
+
+def run_migrations_online() -&gt; None:
+    &quot;&quot;&quot;Ejecutar migraciones en modo online.&quot;&quot;&quot;
+    asyncio.run(run_async_migrations())
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+</file>
+
+<file path="migrations/versions/001_initial.py">
+&quot;&quot;&quot;Initial schema.
+
+Revision ID: 001_initial
+Revises:
+Create Date: 2026-05-26
+&quot;&quot;&quot;
+
+import sqlalchemy as sa
+from alembic import op
+
+revision = &quot;001_initial&quot;
+down_revision = None
+branch_labels = None
+depends_on = None
+
+
+def upgrade() -&gt; None:
+    op.create_table(
+        &quot;users&quot;,
+        sa.Column(&quot;id&quot;, sa.String(36), nullable=False),
+        sa.Column(
+            &quot;created_at&quot;,
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            &quot;updated_at&quot;,
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(&quot;email&quot;, sa.String(255), nullable=False),
+        sa.Column(&quot;hashed_password&quot;, sa.String(255), nullable=False),
+        sa.Column(&quot;is_active&quot;, sa.Boolean(), nullable=False),
+        sa.Column(&quot;full_name&quot;, sa.String(255), nullable=True),
+        sa.PrimaryKeyConstraint(&quot;id&quot;),
+        sa.UniqueConstraint(&quot;email&quot;),
+    )
+    op.create_index(&quot;idx_users_email&quot;, &quot;users&quot;, [&quot;email&quot;])
+
+    op.create_table(
+        &quot;documents&quot;,
+        sa.Column(&quot;id&quot;, sa.String(36), nullable=False),
+        sa.Column(
+            &quot;created_at&quot;,
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            &quot;updated_at&quot;,
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(&quot;filename&quot;, sa.String(255), nullable=False),
+        sa.Column(&quot;content_type&quot;, sa.String(100), nullable=True),
+        sa.Column(&quot;status&quot;, sa.String(50), nullable=False),
+        sa.Column(&quot;extracted_data&quot;, sa.JSON(), nullable=True),
+        sa.Column(&quot;error_logs&quot;, sa.Text(), nullable=True),
+        sa.Column(&quot;user_id&quot;, sa.String(36), nullable=False),
+        sa.ForeignKeyConstraint([&quot;user_id&quot;], [&quot;users.id&quot;]),
+        sa.PrimaryKeyConstraint(&quot;id&quot;),
+    )
+    op.create_index(&quot;idx_documents_user_id&quot;, &quot;documents&quot;, [&quot;user_id&quot;])
+    op.create_index(&quot;idx_documents_status&quot;, &quot;documents&quot;, [&quot;status&quot;])
+
+
+def downgrade() -&gt; None:
+    op.drop_index(&quot;idx_documents_status&quot;, table_name=&quot;documents&quot;)
+    op.drop_index(&quot;idx_documents_user_id&quot;, table_name=&quot;documents&quot;)
+    op.drop_table(&quot;documents&quot;)
+    op.drop_index(&quot;idx_users_email&quot;, table_name=&quot;users&quot;)
+    op.drop_table(&quot;users&quot;)
+
+</file>
+
+<file path="setup.py">
+#!/usr/bin/env python3
+&quot;&quot;&quot;Quick setup script for LogisParse development.&quot;&quot;&quot;
+
+import subprocess
+import sys
+from pathlib import Path
+
+
+def main() -&gt; None:
+    &quot;&quot;&quot;Setup development environment.&quot;&quot;&quot;
+    root = Path(__file__).parent
+
+    print(&quot;Setting up LogisParse development environment...&quot;)
+
+    # Create virtualenv if it doesn&apos;t exist
+    venv_path = root / &quot;.venv&quot;
+    if not venv_path.exists():
+        print(&quot;Creating virtual environment...&quot;)
+        subprocess.run([sys.executable, &quot;-m&quot;, &quot;venv&quot;, &quot;.venv&quot;], cwd=root, check=True)
+
+    # Activate and install
+    pip = venv_path / (&quot;Scripts/pip&quot; if sys.platform == &quot;win32&quot; else &quot;bin/pip&quot;)
+    print(&quot;Installing dependencies...&quot;)
+    subprocess.run([str(pip), &quot;install&quot;, &quot;-q&quot;, &quot;-r&quot;, &quot;requirements.txt&quot;], cwd=root, check=True)
+
+    print(&quot;Setup complete!&quot;)
+    print(&quot;\nNext steps:&quot;)
+    print(&quot;  1. Activate virtual environment:&quot;)
+    if sys.platform == &quot;win32&quot;:
+        print(&quot;     .venv\\Scripts\\Activate.ps1&quot;)
+    else:
+        print(&quot;     source .venv/bin/activate&quot;)
+    print(&quot;  2. Run tests:&quot;)
+    print(&quot;     pytest tests/ -v&quot;)
+    print(&quot;  3. Start development server:&quot;)
+    print(&quot;     uvicorn app.main:app --reload&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()
+
+</file>
+
+<file path="tests/conftest.py">
+&quot;&quot;&quot;Test configuration and fixtures for pytest.
+
+This conftest.py demonstrates:
+1. Override get_settings_dep with fake test settings
+2. Override get_db with in-memory SQLite session
+3. Ensure complete isolation between tests
+4. Avoid touching real PostgreSQL or production resources
+&quot;&quot;&quot;
+
+import os
+import sys
+from collections.abc import AsyncGenerator, Generator
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
+
+# Ensure app is importable
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.api.deps import get_db, get_settings_dep
+from app.core.config import Settings
+from app.main import app
+from app.models.base import Base
+
+
+# ── PYTEST CONFIGURATION ──────────────────────────────
+def pytest_configure(config):
+    &quot;&quot;&quot;Configure pytest environment before tests run.&quot;&quot;&quot;
+    # Ensure we&apos;re NOT using production database
+    os.environ[&quot;DATABASE_URL&quot;] = &quot;sqlite+aiosqlite:///:memory:&quot;
+    os.environ[&quot;SECRET_KEY&quot;] = &quot;test-secret-key-at-least-32-chars-long-!!&quot;
+    os.environ[&quot;OPENAI_API_KEY&quot;] = &quot;test-key-not-real&quot;
+
+    # Register custom markers
+    config.addinivalue_line(&quot;markers&quot;, &quot;integration: marks tests as integration tests&quot;)
+    config.addinivalue_line(&quot;markers&quot;, &quot;unit: marks tests as unit tests&quot;)
+
+
+# ── TEST SETTINGS FIXTURE ─────────────────────────────
+@pytest.fixture
+def test_settings() -&gt; Settings:
+    &quot;&quot;&quot;Provide test Settings with safe defaults.&quot;&quot;&quot;
+    return Settings(
+        DATABASE_URL=&quot;sqlite+aiosqlite:///:memory:&quot;,
+        SQLALCHEMY_ECHO=False,
+        SECRET_KEY=&quot;test-secret-key-at-least-32-chars-long-!!&quot;,
+        ALGORITHM=&quot;HS256&quot;,
+        ACCESS_TOKEN_EXPIRE_MINUTES=30,
+        OPENAI_API_KEY=&quot;sk-test&quot;,
+        APP_TITLE=&quot;LogisParse Test&quot;,
+        APP_VERSION=&quot;0.1.0-test&quot;,
+        DEBUG=True,
+        ENVIRONMENT=&quot;test&quot;,
+        ALLOWED_ORIGINS=[&quot;http://localhost:3000&quot;],
+        MAX_FILE_SIZE_MB=20,
+        LOG_LEVEL=&quot;DEBUG&quot;,
+    )
+
+
+# ── IN-MEMORY DATABASE ───────────────────────────────
+@pytest.fixture
+async def db_engine():
+    &quot;&quot;&quot;Create in-memory SQLite engine for tests.&quot;&quot;&quot;
+    engine = create_async_engine(
+        &quot;sqlite+aiosqlite:///:memory:&quot;,
+        connect_args={&quot;check_same_thread&quot;: False},
+        poolclass=StaticPool,
+        echo=False,
+    )
+
+    # Create all tables
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    yield engine
+    await engine.dispose()
+
+
+# ── DATABASE SESSION FIXTURE ──────────────────────────
+@pytest.fixture
+async def db_session(db_engine) -&gt; AsyncGenerator[AsyncSession, None]:
+    &quot;&quot;&quot;Provide AsyncSession for tests.&quot;&quot;&quot;
+    session_factory = async_sessionmaker(
+        db_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+    )
+
+    async with session_factory() as session:
+        yield session
+
+
+# ── OVERRIDE GET_DB ──────────────────────────────────
+@pytest.fixture
+def override_get_db(db_session: AsyncSession):
+    &quot;&quot;&quot;Override get_db dependency with test session.&quot;&quot;&quot;
+
+    async def _get_db() -&gt; AsyncGenerator[AsyncSession, None]:
+        yield db_session
+
+    app.dependency_overrides[get_db] = _get_db
+    yield
+    app.dependency_overrides.clear()
+
+
+# ── OVERRIDE GET_SETTINGS ────────────────────────────
+@pytest.fixture
+def override_get_settings(test_settings: Settings):
+    &quot;&quot;&quot;Override get_settings_dep dependency with test settings.&quot;&quot;&quot;
+
+    def _get_settings() -&gt; Settings:
+        return test_settings
+
+    app.dependency_overrides[get_settings_dep] = _get_settings
+    yield
+    app.dependency_overrides.clear()
+
+
+# ── TEST CLIENT FIXTURE ───────────────────────────────
+@pytest.fixture
+def client(
+    override_get_db,
+    override_get_settings,
+) -&gt; Generator[TestClient, None, None]:
+    &quot;&quot;&quot;Provide FastAPI test client with dependencies overridden.&quot;&quot;&quot;
+    with TestClient(app) as test_client:
+        yield test_client
+
+</file>
+
+<file path="tests/integration/test_api.py">
+&quot;&quot;&quot;
+Integration tests for API endpoints.
+
+Covers auth flow, document upload/list/get, access control, and pagination.
+All external processing (OCR / AI) is mocked to ensure deterministic tests.
+&quot;&quot;&quot;
+
+from unittest.mock import patch
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.schemas.extraction import ExtractedLogisticsData
+
+# ─────────────────────────────────────────────────────────────
+# MOCK GLOBAL (extractor)
+# ─────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def mock_document_extractor():
+    &quot;&quot;&quot;Avoid OCR + OpenAI calls in integration tests.&quot;&quot;&quot;
+    with patch(&quot;app.api.v1.documents.extract_document&quot;) as mock:
+        mock.return_value = ExtractedLogisticsData(
+            origen=&quot;Puerto Montt&quot;,
+            destino=&quot;Santiago&quot;,
+            patente_camion=&quot;ABCD12&quot;,
+            chofer=&quot;Juan Perez&quot;,
+            fecha_despacho=&quot;2026-01-01&quot;,
+            numero_guia=&quot;12345&quot;,
+            items=[],
+            observaciones=None,
+        )
+        yield mock
+
+
+# ── helpers ──────────────────────────────────────────────────
+
+
+def _register(client: TestClient, email: str, password: str = &quot;strong-password&quot;) -&gt; None:
+    response = client.post(
+        &quot;/api/v1/auth/register&quot;,
+        json={&quot;email&quot;: email, &quot;password&quot;: password, &quot;full_name&quot;: &quot;Test User&quot;},
+    )
+    assert response.status_code == 201
+
+
+def _login(client: TestClient, email: str, password: str = &quot;strong-password&quot;) -&gt; str:
+    response = client.post(
+        &quot;/api/v1/auth/login&quot;,
+        json={&quot;email&quot;: email, &quot;password&quot;: password},
+    )
+    assert response.status_code == 200
+    return response.json()[&quot;access_token&quot;]
+
+
+def _register_and_login(client: TestClient, email: str, password: str = &quot;strong-password&quot;) -&gt; str:
+    _register(client, email, password)
+    return _login(client, email, password)
+
+
+def _upload_pdf(client: TestClient, token: str, filename: str = &quot;guide.pdf&quot;) -&gt; dict:
+    response = client.post(
+        &quot;/api/v1/documents/upload&quot;,
+        headers={&quot;Authorization&quot;: f&quot;Bearer {token}&quot;},
+        files={&quot;file&quot;: (filename, b&quot;%PDF-1.7 fake content&quot;, &quot;application/pdf&quot;)},
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+# ── system endpoints ─────────────────────────────────────────
+
+
+def test_health_endpoint(client: TestClient) -&gt; None:
+    response = client.get(&quot;/health&quot;)
+    assert response.status_code == 200
+    data = response.json()
+    assert data[&quot;status&quot;] == &quot;ok&quot;
+    assert &quot;version&quot; in data
+    assert &quot;X-Request-ID&quot; in response.headers
+
+
+def test_root_endpoint(client: TestClient) -&gt; None:
+    response = client.get(&quot;/&quot;)
+    assert response.status_code == 200
+    assert &quot;name&quot; in response.json()
+
+
+# ── auth ─────────────────────────────────────────────────────
+
+
+def test_register_user(client: TestClient) -&gt; None:
+    response = client.post(
+        &quot;/api/v1/auth/register&quot;,
+        json={
+            &quot;email&quot;: &quot;newuser@example.com&quot;,
+            &quot;password&quot;: &quot;strong-password&quot;,
+            &quot;full_name&quot;: &quot;New User&quot;,
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body[&quot;email&quot;] == &quot;newuser@example.com&quot;
+    assert body[&quot;is_active&quot;] is True
+    assert &quot;id&quot; in body
+    assert &quot;hashed_password&quot; not in body
+
+
+def test_register_duplicate_email_returns_400(client: TestClient) -&gt; None:
+    payload = {&quot;email&quot;: &quot;dup@example.com&quot;, &quot;password&quot;: &quot;strong-password&quot;, &quot;full_name&quot;: &quot;User&quot;}
+    client.post(&quot;/api/v1/auth/register&quot;, json=payload)
+    response = client.post(&quot;/api/v1/auth/register&quot;, json=payload)
+    assert response.status_code == 400
+
+
+def test_login_returns_bearer_token(client: TestClient) -&gt; None:
+    _register(client, &quot;login@example.com&quot;)
+    response = client.post(
+        &quot;/api/v1/auth/login&quot;,
+        json={&quot;email&quot;: &quot;login@example.com&quot;, &quot;password&quot;: &quot;strong-password&quot;},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert &quot;access_token&quot; in body
+    assert body[&quot;token_type&quot;] == &quot;bearer&quot;
+
+
+def test_login_wrong_password_returns_401(client: TestClient) -&gt; None:
+    _register(client, &quot;wrongpass@example.com&quot;, &quot;correct-password&quot;)
+    response = client.post(
+        &quot;/api/v1/auth/login&quot;,
+        json={&quot;email&quot;: &quot;wrongpass@example.com&quot;, &quot;password&quot;: &quot;wrong-password&quot;},
+    )
+    assert response.status_code == 401
+
+
+# ── documents ───────────────────────────────────────────────
+
+
+def test_document_list_requires_auth(client: TestClient) -&gt; None:
+    response = client.get(&quot;/api/v1/documents&quot;)
+    assert response.status_code == 403
+
+
+def test_upload_valid_pdf(client: TestClient) -&gt; None:
+    token = _register_and_login(client, &quot;u1@example.com&quot;)
+    body = _upload_pdf(client, token)
+    assert body[&quot;filename&quot;] == &quot;guide.pdf&quot;
+    assert body[&quot;content_type&quot;] == &quot;application/pdf&quot;
+    assert body[&quot;status&quot;] == &quot;EXTRACTED&quot;
+    assert body[&quot;extracted_data&quot;][&quot;origen&quot;] == &quot;Puerto Montt&quot;
+    assert &quot;id&quot; in body
+    assert &quot;created_at&quot; in body
+
+
+def test_upload_valid_png(client: TestClient) -&gt; None:
+    token = _register_and_login(client, &quot;png@example.com&quot;)
+    response = client.post(
+        &quot;/api/v1/documents/upload&quot;,
+        headers={&quot;Authorization&quot;: f&quot;Bearer {token}&quot;},
+        files={&quot;file&quot;: (&quot;image.png&quot;, b&quot;\x89PNG\r\n\x1a\n&quot;, &quot;image/png&quot;)},
+    )
+    assert response.status_code == 201
+    assert response.json()[&quot;content_type&quot;] == &quot;image/png&quot;
+
+
+def test_upload_valid_jpeg(client: TestClient) -&gt; None:
+    token = _register_and_login(client, &quot;jpg@example.com&quot;)
+    response = client.post(
+        &quot;/api/v1/documents/upload&quot;,
+        headers={&quot;Authorization&quot;: f&quot;Bearer {token}&quot;},
+        files={&quot;file&quot;: (&quot;photo.jpg&quot;, b&quot;\xff\xd8\xff\xe0&quot;, &quot;image/jpeg&quot;)},
+    )
+    assert response.status_code == 201
+    assert response.json()[&quot;content_type&quot;] == &quot;image/jpeg&quot;
+
+
+def test_upload_marks_failed_on_validation_error(
+    client: TestClient,
+    mock_document_extractor,
+) -&gt; None:
+    mock_document_extractor.side_effect = ValueError(&quot;bad document&quot;)
+    token = _register_and_login(client, &quot;extract-value-error@example.com&quot;)
+
+    response = client.post(
+        &quot;/api/v1/documents/upload&quot;,
+        headers={&quot;Authorization&quot;: f&quot;Bearer {token}&quot;},
+        files={&quot;file&quot;: (&quot;guide.pdf&quot;, b&quot;%PDF-1.7 fake content&quot;, &quot;application/pdf&quot;)},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body[&quot;status&quot;] == &quot;FAILED&quot;
+    assert body[&quot;error_logs&quot;] == &quot;bad document&quot;
+
+
+def test_upload_marks_failed_on_unexpected_extraction_error(
+    client: TestClient,
+    mock_document_extractor,
+) -&gt; None:
+    mock_document_extractor.side_effect = RuntimeError(&quot;boom&quot;)
+    token = _register_and_login(client, &quot;extract-runtime-error@example.com&quot;)
+
+    response = client.post(
+        &quot;/api/v1/documents/upload&quot;,
+        headers={&quot;Authorization&quot;: f&quot;Bearer {token}&quot;},
+        files={&quot;file&quot;: (&quot;guide.pdf&quot;, b&quot;%PDF-1.7 fake content&quot;, &quot;application/pdf&quot;)},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body[&quot;status&quot;] == &quot;FAILED&quot;
+    assert body[&quot;error_logs&quot;] == &quot;Extraction failed unexpectedly&quot;
+
+
+def test_upload_rejects_extension_content_mismatch(client: TestClient) -&gt; None:
+    token = _register_and_login(client, &quot;mismatch@example.com&quot;)
+    response = client.post(
+        &quot;/api/v1/documents/upload&quot;,
+        headers={&quot;Authorization&quot;: f&quot;Bearer {token}&quot;},
+        files={&quot;file&quot;: (&quot;guide.pdf&quot;, b&quot;\x89PNG fake&quot;, &quot;application/pdf&quot;)},
+    )
+    assert response.status_code == 400
+
+
+def test_upload_rejects_unsupported_extension(client: TestClient) -&gt; None:
+    token = _register_and_login(client, &quot;unsupported@example.com&quot;)
+    response = client.post(
+        &quot;/api/v1/documents/upload&quot;,
+        headers={&quot;Authorization&quot;: f&quot;Bearer {token}&quot;},
+        files={&quot;file&quot;: (&quot;document.docx&quot;, b&quot;PK\x03\x04&quot;, &quot;application/vnd.openxmlformats&quot;)},
+    )
+    assert response.status_code == 400
+
+
+def test_get_document_list(client: TestClient) -&gt; None:
+    token = _register_and_login(client, &quot;list@example.com&quot;)
+    for i in range(3):
+        _upload_pdf(client, token, f&quot;doc{i}.pdf&quot;)
+
+    response = client.get(
+        &quot;/api/v1/documents&quot;,
+        headers={&quot;Authorization&quot;: f&quot;Bearer {token}&quot;},
+    )
+    assert response.status_code == 200
+    docs = response.json()
+    assert isinstance(docs, list)
+    assert len(docs) == 3
+
+
+def test_get_specific_document(client: TestClient) -&gt; None:
+    token = _register_and_login(client, &quot;specific@example.com&quot;)
+    doc = _upload_pdf(client, token, &quot;specific.pdf&quot;)
+
+    response = client.get(
+        f&quot;/api/v1/documents/{doc[&apos;id&apos;]}&quot;,
+        headers={&quot;Authorization&quot;: f&quot;Bearer {token}&quot;},
+    )
+    assert response.status_code == 200
+    assert response.json()[&quot;id&quot;] == doc[&quot;id&quot;]
+    assert response.json()[&quot;filename&quot;] == &quot;specific.pdf&quot;
+
+
+def test_get_nonexistent_document_returns_404(client: TestClient) -&gt; None:
+    token = _register_and_login(client, &quot;notfound@example.com&quot;)
+    response = client.get(
+        &quot;/api/v1/documents/nonexistent-uuid&quot;,
+        headers={&quot;Authorization&quot;: f&quot;Bearer {token}&quot;},
+    )
+    assert response.status_code == 404
+
+
+def test_access_other_user_document_returns_403(client: TestClient) -&gt; None:
+    token1 = _register_and_login(client, &quot;user1@example.com&quot;)
+    doc = _upload_pdf(client, token1)
+
+    token2 = _register_and_login(client, &quot;user2@example.com&quot;)
+    response = client.get(
+        f&quot;/api/v1/documents/{doc[&apos;id&apos;]}&quot;,
+        headers={&quot;Authorization&quot;: f&quot;Bearer {token2}&quot;},
+    )
+    assert response.status_code == 403
+
+
+def test_pagination_limit(client: TestClient) -&gt; None:
+    token = _register_and_login(client, &quot;paginate@example.com&quot;)
+    for i in range(5):
+        _upload_pdf(client, token, f&quot;doc{i}.pdf&quot;)
+
+    response = client.get(
+        &quot;/api/v1/documents?limit=2&quot;,
+        headers={&quot;Authorization&quot;: f&quot;Bearer {token}&quot;},
+    )
+    assert response.status_code == 200
+    assert len(response.json()) == 2
+
+
+def test_pagination_skip(client: TestClient) -&gt; None:
+    token = _register_and_login(client, &quot;skip@example.com&quot;)
+    for i in range(4):
+        _upload_pdf(client, token, f&quot;doc{i}.pdf&quot;)
+
+    all_docs = client.get(
+        &quot;/api/v1/documents&quot;,
+        headers={&quot;Authorization&quot;: f&quot;Bearer {token}&quot;},
+    ).json()
+
+    skipped = client.get(
+        &quot;/api/v1/documents?skip=2&quot;,
+        headers={&quot;Authorization&quot;: f&quot;Bearer {token}&quot;},
+    ).json()
+
+    assert len(skipped) &lt; len(all_docs)
+
+</file>
+
+<file path="tests/unit/test_adapters.py">
+# tests/unit/test_adapters.py
+import pytest
+from app.services.extractors.specific.starken_adapter import StarkenAdapter
+from app.services.extractors.generic_llm_adapter import GenericLLMAdapter
+from app.services.extractors.adapter_factory import AdapterFactory, DocumentClassifier
+
+# ---------------------------------------------------------
+# Tests para StarkenAdapter (Asíncronos)
+# ---------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_starken_adapter_successful_extraction():
+    adapter = StarkenAdapter()
+    text = &quot;Documento de transporte STARKEN. GUIA N° 987654. Patente del vehículo: RT-ZX-11. Conductor: Juan.&quot;
+    
+    # AHORA USAMOS AWAIT
+    result = await adapter.extract_data(text)
+    
+    assert result[&quot;numero_guia&quot;] == &quot;987654&quot;
+    assert result[&quot;patente_camion&quot;] == &quot;RT-ZX-11&quot;
+    assert result[&quot;origen&quot;] == &quot;Centro Distribución Starken&quot;
+    assert result[&quot;adapter_used&quot;] == &quot;StarkenAdapter&quot;
+    
+    score = adapter.calculate_confidence(result)
+    assert score == 100.0
+
+@pytest.mark.asyncio
+async def test_starken_adapter_missing_data_lowers_confidence():
+    adapter = StarkenAdapter()
+    text = &quot;Documento de transporte STARKEN. GUIA N° 987654. Patente ilegible.&quot;
+    
+    result = await adapter.extract_data(text)
+    
+    assert result[&quot;numero_guia&quot;] == &quot;987654&quot;
+    assert result[&quot;patente_camion&quot;] is None
+    
+    score = adapter.calculate_confidence(result)
+    assert score == 70.0
+
+# ---------------------------------------------------------
+# Tests para GenericLLMAdapter
+# ---------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_generic_llm_adapter_confidence():
+    adapter = GenericLLMAdapter()
+    text = &quot;Llevando carga de Santiago a Puerto Montt.&quot;
+    
+    # Al no pasarle settings, simula un fallo de API por seguridad
+    result = await adapter.extract_data(text)
+    
+    assert result[&quot;adapter_used&quot;] == &quot;GenericLLMAdapter (Fallo API)&quot;
+
+# ---------------------------------------------------------
+# Tests para el Orquestador: AdapterFactory (Sincronos)
+# ---------------------------------------------------------
+
+def test_adapter_factory_routing():
+    starken_text = &quot;Comprobante de carga STARKEN - Destino Concepción&quot;
+    unknown_text = &quot;Guía de Despacho Transporte Los Lagos EIRL - Ruta 5 Sur&quot;
+    
+    adapter1 = AdapterFactory.get_adapter(starken_text)
+    adapter2 = AdapterFactory.get_adapter(unknown_text)
+    
+    assert isinstance(adapter1, StarkenAdapter)
+    assert isinstance(adapter2, GenericLLMAdapter)
+
+def test_classifier_identifies_starken():
+    assert DocumentClassifier.identify_company(&quot;envío por starken hoy&quot;) == &quot;starken&quot;
+    assert DocumentClassifier.identify_company(&quot;TURBUS CARGO LOGISTICS&quot;) == &quot;starken&quot;
+    assert DocumentClassifier.identify_company(&quot;Factura genérica sin marca&quot;) == &quot;unknown&quot;
+</file>
+
+<file path="tests/unit/test_crud.py">
+&quot;&quot;&quot;Tests for CRUD operations.&quot;&quot;&quot;
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.crud.crud_document import (
+    create_document,
+    get_user_documents,
+    update_document_status,
+)
+from app.crud.crud_user import authenticate_user, create_user, get_user_by_email
+from app.models.document import DocumentStatus
+
+
+@pytest.mark.asyncio
+async def test_create_user(db_session: AsyncSession) -&gt; None:
+    &quot;&quot;&quot;Test user creation.&quot;&quot;&quot;
+    user = await create_user(db_session, &quot;test@example.com&quot;, &quot;password123456&quot;, &quot;Test User&quot;)
+
+    assert user.email == &quot;test@example.com&quot;
+    assert user.hashed_password != &quot;password123456&quot;
+
+
+@pytest.mark.asyncio
+async def test_get_user_by_email(db_session: AsyncSession) -&gt; None:
+    &quot;&quot;&quot;Test retrieving user by email.&quot;&quot;&quot;
+    await create_user(db_session, &quot;search@example.com&quot;, &quot;password123456&quot;, &quot;Search User&quot;)
+    found_user = await get_user_by_email(db_session, &quot;search@example.com&quot;)
+
+    assert found_user is not None
+    assert found_user.email == &quot;search@example.com&quot;
+
+
+@pytest.mark.asyncio
+async def test_get_nonexistent_user_returns_none(db_session: AsyncSession) -&gt; None:
+    &quot;&quot;&quot;Test retrieving nonexistent user.&quot;&quot;&quot;
+    found_user = await get_user_by_email(db_session, &quot;nonexistent@example.com&quot;)
+    assert found_user is None
+
+
+@pytest.mark.asyncio
+async def test_authenticate_user(db_session: AsyncSession) -&gt; None:
+    &quot;&quot;&quot;Test user authentication.&quot;&quot;&quot;
+    await create_user(db_session, &quot;auth@example.com&quot;, &quot;correct_password_123&quot;, &quot;Auth User&quot;)
+    authenticated = await authenticate_user(db_session, &quot;auth@example.com&quot;, &quot;correct_password_123&quot;)
+
+    assert authenticated is not None
+    assert authenticated.email == &quot;auth@example.com&quot;
+
+
+@pytest.mark.asyncio
+async def test_authenticate_with_wrong_password_returns_none(db_session: AsyncSession) -&gt; None:
+    &quot;&quot;&quot;Test authentication with wrong password.&quot;&quot;&quot;
+    await create_user(db_session, &quot;wrong@example.com&quot;, &quot;correct_password_123&quot;, &quot;Wrong User&quot;)
+    authenticated = await authenticate_user(db_session, &quot;wrong@example.com&quot;, &quot;wrong_password_000&quot;)
+
+    assert authenticated is None
+
+
+@pytest.mark.asyncio
+async def test_create_document(db_session: AsyncSession) -&gt; None:
+    &quot;&quot;&quot;Test document creation.&quot;&quot;&quot;
+    user = await create_user(db_session, &quot;doc_owner@example.com&quot;, &quot;password123456&quot;, &quot;Doc Owner&quot;)
+
+    doc = await create_document(db_session, user.id, &quot;test.pdf&quot;, &quot;application/pdf&quot;)
+
+    assert doc.filename == &quot;test.pdf&quot;
+    assert doc.status == DocumentStatus.PENDING
+    assert doc.user_id == user.id
+
+
+@pytest.mark.asyncio
+async def test_update_document_status(db_session: AsyncSession) -&gt; None:
+    &quot;&quot;&quot;Test updating document status.&quot;&quot;&quot;
+    user = await create_user(db_session, &quot;status@example.com&quot;, &quot;password123456&quot;, &quot;Status User&quot;)
+    doc = await create_document(db_session, user.id, &quot;status.pdf&quot;, &quot;application/pdf&quot;)
+
+    updated = await update_document_status(db_session, doc.id, DocumentStatus.EXTRACTED)
+
+    assert updated is not None
+    assert updated.status == DocumentStatus.EXTRACTED
+
+
+@pytest.mark.asyncio
+async def test_get_user_documents(db_session: AsyncSession) -&gt; None:
+    &quot;&quot;&quot;Test retrieving user&apos;s documents.&quot;&quot;&quot;
+    user = await create_user(db_session, &quot;list@example.com&quot;, &quot;password123456&quot;, &quot;List User&quot;)
+
+    await create_document(db_session, user.id, &quot;doc1.pdf&quot;, &quot;application/pdf&quot;)
+    await create_document(db_session, user.id, &quot;doc2.pdf&quot;, &quot;application/pdf&quot;)
+
+    docs = await get_user_documents(db_session, user.id)
+
+    assert len(docs) == 2
+    assert all(d.user_id == user.id for d in docs)
+
+</file>
+
+<file path="tests/unit/test_extractor.py">
+import sys
+
+import pytest
+
+from app.core.config import Settings
+from app.schemas.extraction import ExtractedLogisticsData
+from app.services import document_extractor
+from app.services.document_extractor import (
+    AI_CONTEXT_CHAR_LIMIT,
+    RegexResult,
+    ai_complete,
+    build_ai_context,
+    extract_document,
+    extract_text,
+    extract_text_from_image,
+    extract_text_from_pdf,
+    missing_fields,
+    run_regex,
+    to_schema,
+)
+
+
+def test_run_regex_full_document() -&gt; None:
+    text = &quot;&quot;&quot;
+    Origen: Puerto Montt
+    Destino: Santiago
+    Chofer: Juan Perez
+    Patente: AB1234
+    Guia: 123456
+    10 kg Salmon Atlantico
+    5 cajas hielo
+    &quot;&quot;&quot;
+
+    result = run_regex(text)
+
+    assert result.origen == &quot;Puerto Montt&quot;
+    assert result.destino == &quot;Santiago&quot;
+    assert result.chofer == &quot;Juan Perez&quot;
+    assert result.patente == &quot;AB1234&quot;
+    assert result.guia == &quot;123456&quot;
+    assert len(result.items) &gt;= 1
+
+
+def test_run_regex_partial_document() -&gt; None:
+    result = run_regex(&quot;Origen: Puerto Montt&quot;)
+    missing = missing_fields(result)
+
+    assert &quot;origen&quot; not in missing
+    assert &quot;destino&quot; in missing
+    assert &quot;chofer&quot; in missing
+    assert &quot;patente&quot; in missing
+    assert &quot;fecha&quot; in missing
+    assert &quot;guia&quot; in missing
+
+
+def test_to_schema_mapping() -&gt; None:
+    text = &quot;&quot;&quot;
+    Origen: A
+    Destino: B
+    Chofer: C
+    Patente: ZZ9999
+    Guia: 7777
+    2 kg pescado
+    &quot;&quot;&quot;
+
+    schema = to_schema(run_regex(text))
+
+    assert schema.origen == &quot;A&quot;
+    assert schema.destino == &quot;B&quot;
+    assert schema.patente_camion == &quot;ZZ9999&quot;
+    assert schema.numero_guia == &quot;7777&quot;
+    assert len(schema.items) &gt;= 1
+
+
+def test_extract_text_returns_empty_for_unsupported_content_type() -&gt; None:
+    assert extract_text(b&quot;plain text&quot;, &quot;text/plain&quot;) == &quot;&quot;
+
+
+def test_extract_text_routes_supported_content_types(monkeypatch) -&gt; None:
+    monkeypatch.setattr(document_extractor, &quot;extract_text_from_pdf&quot;, lambda *_args: &quot;pdf&quot;)
+    monkeypatch.setattr(document_extractor, &quot;extract_text_from_image&quot;, lambda *_args: &quot;image&quot;)
+
+    assert extract_text(b&quot;pdf bytes&quot;, &quot;application/pdf&quot;) == &quot;pdf&quot;
+    assert extract_text(b&quot;image bytes&quot;, &quot;image/png&quot;) == &quot;image&quot;
+    assert extract_text(b&quot;image bytes&quot;, &quot;image/jpeg&quot;) == &quot;image&quot;
+
+
+def test_pdf_extraction_returns_empty_when_dependency_is_missing(monkeypatch) -&gt; None:
+    real_import = __import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == &quot;pdfplumber&quot;:
+            raise ImportError(&quot;missing pdfplumber&quot;)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(&quot;builtins.__import__&quot;, fake_import)
+
+    assert extract_text_from_pdf(b&quot;%PDF-1.7 fake content&quot;) == &quot;&quot;
+
+
+def test_image_extraction_returns_empty_when_dependency_is_missing(monkeypatch) -&gt; None:
+    real_import = __import__
+
+    def fake_import(name, *args, **kwargs):
+        if name in {&quot;pytesseract&quot;, &quot;PIL&quot;}:
+            raise ImportError(&quot;missing OCR dependency&quot;)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(&quot;builtins.__import__&quot;, fake_import)
+
+    assert extract_text_from_image(b&quot;\x89PNG\r\n\x1a\n&quot;) == &quot;&quot;
+
+
+def test_build_ai_context_uses_only_relevant_fragments() -&gt; None:
+    text = &quot;\n&quot;.join(
+        [
+            &quot;Linea administrativa sin datos utiles &quot; * 20,
+            &quot;Destino: Centro de distribucion Santiago&quot;,
+            &quot;Otra linea larga que no deberia viajar a IA &quot; * 20,
+            &quot;Patente camion: ABCD12&quot;,
+            &quot;Observacion final irrelevante &quot; * 20,
+        ]
+    )
+
+    context = build_ai_context(text, [&quot;destino&quot;, &quot;patente&quot;])
+
+    assert &quot;Destino: Centro de distribucion Santiago&quot; in context
+    assert &quot;Patente camion: ABCD12&quot; in context
+    assert &quot;Otra linea larga&quot; not in context
+    assert len(context) &lt;= AI_CONTEXT_CHAR_LIMIT
+
+
+def test_build_ai_context_skips_blank_lines_and_stops_at_limit() -&gt; None:
+    text = &quot;\n\n&quot;.join([f&quot;Destino: linea relevante {index}&quot; for index in range(80)])
+
+    context = build_ai_context(text, [&quot;destino&quot;])
+
+    assert context.startswith(&quot;Destino: linea relevante 0&quot;)
+    assert len(context) &lt;= AI_CONTEXT_CHAR_LIMIT
+
+
+def test_build_ai_context_falls_back_to_short_text_when_no_keywords() -&gt; None:
+    text = &quot; &quot;.join([&quot;sin etiquetas claras&quot;] * 100)
+
+    context = build_ai_context(text, [&quot;guia&quot;])
+
+    assert context.startswith(&quot;sin etiquetas claras&quot;)
+    assert len(context) &lt;= document_extractor.AI_CONTEXT_FALLBACK_CHARS
+
+
+@pytest.mark.asyncio
+async def test_extract_document_rejects_tiny_file() -&gt; None:
+    settings = Settings(OPENAI_API_KEY=&quot;&quot;)
+
+    with pytest.raises(ValueError, match=&quot;file too small&quot;):
+        await extract_document(b&quot;tiny&quot;, &quot;tiny.pdf&quot;, &quot;application/pdf&quot;, settings)
+
+
+@pytest.mark.asyncio
+async def test_extract_document_returns_empty_schema_when_text_missing(monkeypatch) -&gt; None:
+    settings = Settings(OPENAI_API_KEY=&quot;&quot;)
+    monkeypatch.setattr(document_extractor, &quot;extract_text&quot;, lambda *_args: &quot;&quot;)
+
+    result = await extract_document(
+        b&quot;%PDF-1.7 enough bytes&quot;, &quot;blank.pdf&quot;, &quot;application/pdf&quot;, settings
+    )
+
+    assert result == ExtractedLogisticsData()
+
+
+@pytest.mark.asyncio
+async def test_extract_document_uses_regex_when_complete(monkeypatch) -&gt; None:
+    settings = Settings(OPENAI_API_KEY=&quot;sk-test&quot;)
+    text = &quot;&quot;&quot;
+    Origen: Puerto Montt
+    Destino: Santiago
+    Chofer: Juan Perez
+    AB1234
+    Guia: 123456
+    01/01/2026
+    10 kg Salmon
+    &quot;&quot;&quot;
+    monkeypatch.setattr(document_extractor, &quot;extract_text&quot;, lambda *_args: text)
+
+    result = await extract_document(
+        b&quot;%PDF-1.7 enough bytes&quot;, &quot;guide.pdf&quot;, &quot;application/pdf&quot;, settings
+    )
+
+    assert result.origen == &quot;Puerto Montt&quot;
+    assert result.destino == &quot;Santiago&quot;
+    assert result.numero_guia == &quot;123456&quot;
+
+
+@pytest.mark.asyncio
+async def test_extract_document_calls_ai_for_low_confidence(monkeypatch) -&gt; None:
+    settings = Settings(OPENAI_API_KEY=&quot;sk-test&quot;)
+    monkeypatch.setattr(document_extractor, &quot;extract_text&quot;, lambda *_args: &quot;Origen: Puerto Montt&quot;)
+
+    async def fake_ai_complete(*_args):
+        return ExtractedLogisticsData(origen=&quot;Puerto Montt&quot;, destino=&quot;Santiago&quot;)
+
+    monkeypatch.setattr(document_extractor, &quot;ai_complete&quot;, fake_ai_complete)
+
+    result = await extract_document(
+        b&quot;%PDF-1.7 enough bytes&quot;, &quot;guide.pdf&quot;, &quot;application/pdf&quot;, settings
+    )
+
+    assert result.destino == &quot;Santiago&quot;
+
+
+@pytest.mark.asyncio
+async def test_extract_document_skips_ai_when_confidence_is_high_enough(monkeypatch) -&gt; None:
+    settings = Settings(OPENAI_API_KEY=&quot;sk-test&quot;)
+    text = &quot;&quot;&quot;
+    Origen: Puerto Montt
+    Destino: Santiago
+    Chofer: Juan Perez
+    AB1234
+    01/01/2026
+    &quot;&quot;&quot;
+    monkeypatch.setattr(document_extractor, &quot;extract_text&quot;, lambda *_args: text)
+
+    async def fail_if_called(*_args):
+        raise AssertionError(&quot;AI should not be called when regex confidence is enough&quot;)
+
+    monkeypatch.setattr(document_extractor, &quot;ai_complete&quot;, fail_if_called)
+
+    result = await extract_document(
+        b&quot;%PDF-1.7 enough bytes&quot;, &quot;guide.pdf&quot;, &quot;application/pdf&quot;, settings
+    )
+
+    assert result.numero_guia is None
+    assert result.origen == &quot;Puerto Montt&quot;
+
+
+@pytest.mark.asyncio
+async def test_ai_complete_without_api_key_returns_regex_schema() -&gt; None:
+    settings = Settings(OPENAI_API_KEY=&quot;&quot;)
+    regex_result = RegexResult(origen=&quot;A&quot;, destino=&quot;B&quot;, confidence=0.2)
+
+    result = await ai_complete(&quot;Origen: A&quot;, regex_result, [&quot;chofer&quot;], settings)
+
+    assert result.origen == &quot;A&quot;
+    assert result.destino == &quot;B&quot;
+
+
+@pytest.mark.asyncio
+async def test_ai_complete_sends_compact_context_and_merges_regex_first(
+    monkeypatch,
+) -&gt; None:
+    captured = {}
+
+    class FakeResponses:
+        async def parse(self, **kwargs):
+            captured.update(kwargs)
+
+            class Response:
+                output_parsed = ExtractedLogisticsData(
+                    origen=&quot;AI should not replace regex&quot;,
+                    destino=&quot;Santiago&quot;,
+                    patente_camion=&quot;ZZ9999&quot;,
+                    observaciones=&quot;Validado con fragmentos&quot;,
+                )
+
+            return Response()
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    class FakeOpenAI:
+        def AsyncOpenAI(self, api_key=None):
+            return FakeClient()
+
+    monkeypatch.setitem(sys.modules, &quot;openai&quot;, FakeOpenAI())
+
+    settings = Settings(OPENAI_API_KEY=&quot;sk-test&quot;, OPENAI_MODEL=&quot;gpt-test&quot;)
+    regex_result = RegexResult(origen=&quot;Puerto Montt&quot;, confidence=0.2)
+    noisy_text = &quot;\n&quot;.join(
+        [
+            &quot;bloque de texto irrelevante &quot; * 80,
+            &quot;Destino: Santiago&quot;,
+            &quot;Patente: ZZ9999&quot;,
+            &quot;otro bloque irrelevante &quot; * 80,
+        ]
+    )
+
+    result = await ai_complete(noisy_text, regex_result, [&quot;destino&quot;, &quot;patente&quot;], settings)
+
+    user_text = captured[&quot;input&quot;][1][&quot;content&quot;][0][&quot;text&quot;]
+    assert captured[&quot;model&quot;] == &quot;gpt-test&quot;
+    assert &quot;Destino: Santiago&quot; in user_text
+    assert &quot;bloque de texto irrelevante&quot; not in user_text
+    assert result.origen == &quot;Puerto Montt&quot;
+    assert result.destino == &quot;Santiago&quot;
+    assert result.patente_camion == &quot;ZZ9999&quot;
+
+</file>
+
+<file path="tests/unit/test_health_endpoints.py">
+&quot;&quot;&quot;Example tests demonstrating proper dependency injection with pytest.&quot;&quot;&quot;
+
+from fastapi.testclient import TestClient
+
+
+class TestHealthEndpoints:
+    &quot;&quot;&quot;Test health check endpoints.&quot;&quot;&quot;
+
+    def test_health_endpoint(self, client: TestClient):
+        &quot;&quot;&quot;Test /health endpoint with injected settings.&quot;&quot;&quot;
+        response = client.get(&quot;/health&quot;)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data[&quot;status&quot;] == &quot;ok&quot;
+        assert &quot;version&quot; in data
+
+    def test_ready_endpoint(self, client: TestClient):
+        &quot;&quot;&quot;Test /ready endpoint.&quot;&quot;&quot;
+        response = client.get(&quot;/ready&quot;)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data[&quot;status&quot;] == &quot;ready&quot;
+
+    def test_root_endpoint(self, client: TestClient):
+        &quot;&quot;&quot;Test root endpoint.&quot;&quot;&quot;
+        response = client.get(&quot;/&quot;)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert &quot;name&quot; in data
+        assert &quot;docs&quot; in data
+        assert &quot;health&quot; in data
+
+</file>
+
+<file path="tests/unit/test_routes_direct.py">
+from io import BytesIO
+
+import pytest
+from fastapi import HTTPException, UploadFile
+from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_current_user
+from app.api.v1 import auth, documents
+from app.core.config import Settings
+from app.core.security import create_access_token
+from app.crud.crud_user import create_user
+from app.models.document import DocumentStatus
+from app.schemas.extraction import ExtractedLogisticsData
+from app.schemas.user import UserCreate, UserLogin
+
+
+@pytest.mark.asyncio
+async def test_register_and_login_route_functions(
+    db_session: AsyncSession,
+    test_settings: Settings,
+) -&gt; None:
+    created = await auth.register(
+        UserCreate(
+            email=&quot;direct@example.com&quot;,
+            password=&quot;strong-password&quot;,
+            full_name=&quot;Direct User&quot;,
+        ),
+        db_session,
+    )
+
+    token = await auth.login(
+        UserLogin(email=created.email, password=&quot;strong-password&quot;),
+        db_session,
+        test_settings,
+    )
+
+    assert created.email == &quot;direct@example.com&quot;
+    assert token.token_type == &quot;bearer&quot;
+    assert token.access_token
+
+
+@pytest.mark.asyncio
+async def test_register_route_rejects_duplicate_email(db_session: AsyncSession) -&gt; None:
+    payload = UserCreate(
+        email=&quot;duplicate-direct@example.com&quot;,
+        password=&quot;strong-password&quot;,
+        full_name=&quot;Duplicate&quot;,
+    )
+
+    await auth.register(payload, db_session)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await auth.register(payload, db_session)
+
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_login_route_rejects_inactive_user(
+    db_session: AsyncSession,
+    test_settings: Settings,
+) -&gt; None:
+    user = await create_user(
+        db_session,
+        &quot;inactive-direct@example.com&quot;,
+        &quot;strong-password&quot;,
+        &quot;Inactive&quot;,
+    )
+    user.is_active = False
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await auth.login(
+            UserLogin(email=&quot;inactive-direct@example.com&quot;, password=&quot;strong-password&quot;),
+            db_session,
+            test_settings,
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_decodes_token(
+    db_session: AsyncSession,
+    test_settings: Settings,
+) -&gt; None:
+    user = await create_user(
+        db_session,
+        &quot;token-direct@example.com&quot;,
+        &quot;strong-password&quot;,
+        &quot;Token User&quot;,
+    )
+    token = create_access_token(
+        {&quot;sub&quot;: user.id},
+        test_settings.SECRET_KEY,
+        test_settings.ALGORITHM,
+    )
+    credentials = HTTPAuthorizationCredentials(scheme=&quot;Bearer&quot;, credentials=token)
+
+    current_user = await get_current_user(credentials, db_session, test_settings)
+
+    assert current_user.id == user.id
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_rejects_invalid_token(
+    db_session: AsyncSession,
+    test_settings: Settings,
+) -&gt; None:
+    credentials = HTTPAuthorizationCredentials(scheme=&quot;Bearer&quot;, credentials=&quot;not-a-token&quot;)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_current_user(credentials, db_session, test_settings)
+
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_upload_document_route_success(
+    db_session: AsyncSession,
+    test_settings: Settings,
+    monkeypatch,
+) -&gt; None:
+    user = await create_user(
+        db_session,
+        &quot;upload-direct@example.com&quot;,
+        &quot;strong-password&quot;,
+        &quot;Uploader&quot;,
+    )
+
+    async def fake_extract_document(**_kwargs):
+        return ExtractedLogisticsData(
+            origen=&quot;Puerto Montt&quot;,
+            destino=&quot;Santiago&quot;,
+            numero_guia=&quot;12345&quot;,
+        )
+
+    monkeypatch.setattr(documents, &quot;extract_document&quot;, fake_extract_document)
+    upload = UploadFile(filename=&quot;guide.pdf&quot;, file=BytesIO(b&quot;%PDF-1.7 fake content&quot;))
+
+    response = await documents.upload_document(upload, user, db_session, test_settings)
+
+    assert response.status == DocumentStatus.EXTRACTED
+    assert response.extracted_data[&quot;origen&quot;] == &quot;Puerto Montt&quot;
+
+
+@pytest.mark.asyncio
+async def test_upload_document_route_marks_failed_on_value_error(
+    db_session: AsyncSession,
+    test_settings: Settings,
+    monkeypatch,
+) -&gt; None:
+    user = await create_user(
+        db_session,
+        &quot;upload-failed-direct@example.com&quot;,
+        &quot;strong-password&quot;,
+        &quot;Uploader&quot;,
+    )
+
+    async def fake_extract_document(**_kwargs):
+        raise ValueError(&quot;formato incompleto&quot;)
+
+    monkeypatch.setattr(documents, &quot;extract_document&quot;, fake_extract_document)
+    upload = UploadFile(filename=&quot;guide.pdf&quot;, file=BytesIO(b&quot;%PDF-1.7 fake content&quot;))
+
+    response = await documents.upload_document(upload, user, db_session, test_settings)
+
+    assert response.status == DocumentStatus.FAILED
+    assert response.error_logs == &quot;formato incompleto&quot;
+
+
+@pytest.mark.asyncio
+async def test_list_and_get_document_route_functions(
+    db_session: AsyncSession,
+    test_settings: Settings,
+    monkeypatch,
+) -&gt; None:
+    user = await create_user(
+        db_session,
+        &quot;list-direct@example.com&quot;,
+        &quot;strong-password&quot;,
+        &quot;Lister&quot;,
+    )
+
+    async def fake_extract_document(**_kwargs):
+        return ExtractedLogisticsData(origen=&quot;Puerto Montt&quot;)
+
+    monkeypatch.setattr(documents, &quot;extract_document&quot;, fake_extract_document)
+    upload = UploadFile(filename=&quot;guide.pdf&quot;, file=BytesIO(b&quot;%PDF-1.7 fake content&quot;))
+    created = await documents.upload_document(upload, user, db_session, test_settings)
+
+    listed = await documents.list_documents(0, 10, user, db_session)
+    fetched = await documents.get_document(created.id, user, db_session)
+
+    assert [doc.id for doc in listed] == [created.id]
+    assert fetched.filename == &quot;guide.pdf&quot;
+
+
+@pytest.mark.asyncio
+async def test_get_document_route_rejects_other_owner(
+    db_session: AsyncSession,
+    test_settings: Settings,
+    monkeypatch,
+) -&gt; None:
+    owner = await create_user(db_session, &quot;owner-direct@example.com&quot;, &quot;strong-password&quot;, &quot;Owner&quot;)
+    intruder = await create_user(
+        db_session,
+        &quot;intruder-direct@example.com&quot;,
+        &quot;strong-password&quot;,
+        &quot;Intruder&quot;,
+    )
+
+    async def fake_extract_document(**_kwargs):
+        return ExtractedLogisticsData(origen=&quot;Puerto Montt&quot;)
+
+    monkeypatch.setattr(documents, &quot;extract_document&quot;, fake_extract_document)
+    upload = UploadFile(filename=&quot;guide.pdf&quot;, file=BytesIO(b&quot;%PDF-1.7 fake content&quot;))
+    created = await documents.upload_document(upload, owner, db_session, test_settings)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await documents.get_document(created.id, intruder, db_session)
+
+    assert exc_info.value.status_code == 403
+
+</file>
+
+<file path="tests/unit/test_schemas.py">
+&quot;&quot;&quot;Tests for Pydantic schemas validation.&quot;&quot;&quot;
+
+import pytest
+from pydantic import ValidationError
+
+from app.schemas.document import DocumentResponse
+from app.schemas.extraction import ExtractedLogisticsData
+from app.schemas.token import TokenResponse
+from app.schemas.user import UserCreate, UserLogin
+
+
+def test_user_create_validation() -&gt; None:
+    &quot;&quot;&quot;Test UserCreate schema validation.&quot;&quot;&quot;
+    # Valid user
+    user = UserCreate(email=&quot;test@example.com&quot;, password=&quot;validpassword123&quot;, full_name=&quot;Test&quot;)
+    assert user.email == &quot;test@example.com&quot;
+
+    # Invalid email
+    with pytest.raises(ValidationError):
+        UserCreate(email=&quot;not-an-email&quot;, password=&quot;validpassword123&quot;, full_name=&quot;Test&quot;)
+
+
+def test_user_login_validation() -&gt; None:
+    &quot;&quot;&quot;Test UserLogin schema validation.&quot;&quot;&quot;
+    login = UserLogin(email=&quot;test@example.com&quot;, password=&quot;password123&quot;)
+    assert login.email == &quot;test@example.com&quot;
+
+    with pytest.raises(ValidationError):
+        UserLogin(email=&quot;invalid-email&quot;, password=&quot;password123&quot;)
+
+
+def test_token_response_validation() -&gt; None:
+    &quot;&quot;&quot;Test TokenResponse schema validation.&quot;&quot;&quot;
+    token = TokenResponse(access_token=&quot;abc123&quot;, token_type=&quot;bearer&quot;)
+    assert token.token_type == &quot;bearer&quot;
+
+
+def test_extracted_logistics_data_validation() -&gt; None:
+    &quot;&quot;&quot;Test ExtractedLogisticsData schema.&quot;&quot;&quot;
+    data = ExtractedLogisticsData(
+        origen=&quot;Puerto Montt&quot;,
+        destino=&quot;Puerto Varas&quot;,
+        patente_camion=&quot;ABC-1234&quot;,
+        fecha_despacho=&quot;2026-05-29&quot;,
+        items=[
+            {&quot;sku&quot;: &quot;SALMON-001&quot;, &quot;cantidad&quot;: 100},
+            {&quot;sku&quot;: &quot;SALMON-002&quot;, &quot;cantidad&quot;: 250},
+        ],
+    )
+    assert data.origen == &quot;Puerto Montt&quot;
+    assert len(data.items) == 2
+
+
+def test_document_response_validation() -&gt; None:
+    &quot;&quot;&quot;Test DocumentResponse schema.&quot;&quot;&quot;
+    from datetime import datetime
+
+    doc = DocumentResponse(
+        id=&quot;doc-123&quot;,
+        filename=&quot;guide.pdf&quot;,
+        content_type=&quot;application/pdf&quot;,
+        status=&quot;PENDING&quot;,
+        uploaded_at=datetime.now(),
+    )
+    assert doc.filename == &quot;guide.pdf&quot;
+    assert doc.status == &quot;PENDING&quot;
+
+</file>
+
+<file path="tests/unit/test_security.py">
+&quot;&quot;&quot;Tests for security utilities.&quot;&quot;&quot;
+
+from datetime import timedelta
+
+from app.core.security import create_access_token, decode_token, hash_password, verify_password
+
+
+def test_password_hash_roundtrip() -&gt; None:
+    &quot;&quot;&quot;Test password hashing and verification.&quot;&quot;&quot;
+    hashed = hash_password(&quot;strong-password-123&quot;)
+
+    assert hashed != &quot;strong-password-123&quot;
+    assert verify_password(&quot;strong-password-123&quot;, hashed)
+    assert not verify_password(&quot;wrong-password&quot;, hashed)
+
+
+def test_jwt_roundtrip() -&gt; None:
+    &quot;&quot;&quot;Test JWT token creation and decoding.&quot;&quot;&quot;
+    secret_key = &quot;test-secret-key-at-least-32-chars-long-!!&quot;
+    algorithm = &quot;HS256&quot;
+
+    token = create_access_token(
+        {&quot;sub&quot;: &quot;user-123&quot;},
+        secret_key=secret_key,
+        algorithm=algorithm,
+        expires_delta=timedelta(minutes=5),
+    )
+    payload = decode_token(token, secret_key, algorithm)
+
+    assert payload is not None
+    assert payload[&quot;sub&quot;] == &quot;user-123&quot;
+
+</file>
+
+<file path="tests/unit/test_upload_validation.py">
+from io import BytesIO
+
+import pytest
+from fastapi import HTTPException, UploadFile
+
+from app.services.upload_validation import (
+    detect_content_type,
+    read_and_validate_upload,
+    sanitize_filename,
+)
+
+
+def test_detect_content_type_pdf() -&gt; None:
+    assert detect_content_type(b&quot;%PDF-1.7 content&quot;) == &quot;application/pdf&quot;
+
+
+def test_detect_content_type_png() -&gt; None:
+    assert detect_content_type(b&quot;\x89PNG\r\n\x1a\ncontent&quot;) == &quot;image/png&quot;
+
+
+def test_detect_content_type_jpeg() -&gt; None:
+    assert detect_content_type(b&quot;\xff\xd8\xff\xe0content&quot;) == &quot;image/jpeg&quot;
+
+
+def test_detect_content_type_rejects_unknown_bytes() -&gt; None:
+    with pytest.raises(HTTPException):
+        detect_content_type(b&quot;not a supported file&quot;)
+
+
+def test_sanitize_filename_strips_paths() -&gt; None:
+    assert sanitize_filename(&quot;../nested/guide.pdf&quot;) == &quot;guide.pdf&quot;
+
+
+def test_sanitize_filename_rejects_missing_name() -&gt; None:
+    with pytest.raises(HTTPException):
+        sanitize_filename(None)
+
+
+@pytest.mark.asyncio
+async def test_read_and_validate_upload_rejects_empty_file() -&gt; None:
+    upload = UploadFile(filename=&quot;empty.pdf&quot;, file=BytesIO(b&quot;&quot;))
+
+    with pytest.raises(HTTPException):
+        await read_and_validate_upload(upload)
+
+
+@pytest.mark.asyncio
+async def test_read_and_validate_upload_accepts_pdf() -&gt; None:
+    upload = UploadFile(filename=&quot;guide.pdf&quot;, file=BytesIO(b&quot;%PDF-1.7 content&quot;))
+
+    filename, content_type, content = await read_and_validate_upload(upload)
+
+    assert filename == &quot;guide.pdf&quot;
+    assert content_type == &quot;application/pdf&quot;
+    assert content.startswith(b&quot;%PDF&quot;)
+
+
+def test_upload_file_import_available() -&gt; None:
+    assert UploadFile is not None
+
+</file>
+
+</repository>
