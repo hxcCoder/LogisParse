@@ -2,37 +2,55 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: ["main"]
   pull_request:
-    branches: [ main ]
 
 jobs:
   test:
     runs-on: ubuntu-latest
 
+    defaults:
+      run:
+        working-directory: logisparse
+
     steps:
-    - name: Descargar código
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Configurar Python
-      uses: actions/checkout@v4
-      with:
-        python-version: '3.12'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-    - name: Instalar dependencias
-      run: |
-        python -m pip upgrade pip
-        pip install -r requirements.txt  # O tu archivo de dependencias
-        pip install pytest pytest-cov
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Si el requirements.txt está en la raíz, usamos ../requirements.txt
+          # Si está dentro de logisparse, se usa requirements.txt. Probamos ambos de forma segura:
+          if [ -f "requirements.txt" ]; then
+            python -m pip install -r requirements.txt
+          elif [ -f "../requirements.txt" ]; then
+            python -m pip install -r ../requirements.txt
+          fi
+          # Forzamos la instalación de las herramientas de desarrollo por si no están en el requirements
+          python -m pip install ruff mypy pytest pytest-cov aiosqlite
 
-    - name: Ejecutar Tests con Cobertura
-      run: |
-        pytest --cov=app --cov-report=xml
+      - name: Lint
+        run: ruff check .
 
-    # Este paso conecta con el badge de Codecov que tienes en tu README
-    - name: Subir reporte a Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        fail_ci_if_error: false
-        # Si tu repo es público, a veces no necesitas token. Si es privado, usa:
-        # token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Format check
+        run: ruff format --check .
+
+      - name: Type check
+        run: mypy app
+
+      - name: Test with coverage
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          SECRET_KEY: ci-secret-key-with-enough-length
+          OPENAI_API_KEY: ""
+        run: pytest -q --cov=app --cov-branch --cov-report=xml
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml  # Como el working-directory ya es logisparse, el archivo se genera ahí mismo
