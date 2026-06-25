@@ -1,15 +1,18 @@
 from typing import Any
-from sqlalchemy import select, desc
+
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.document import Document, DocumentStatus, DataCorrection
+from app.models.document import DataCorrection, Document, DocumentStatus
 from app.schemas.document import DataCorrectionCreate
 
 # ── FUNCIONES ORIGINALES DE DOCUMENTOS ───────────────────
 
+
 async def get_document_by_id(db: AsyncSession, document_id: str) -> Document | None:
     result = await db.execute(select(Document).where(Document.id == document_id))
     return result.scalars().first()
+
 
 async def get_user_documents(
     db: AsyncSession,
@@ -25,6 +28,7 @@ async def get_user_documents(
         .limit(limit)
     )
     return list(result.scalars().all())
+
 
 async def create_document(
     db: AsyncSession,
@@ -42,6 +46,7 @@ async def create_document(
     await db.commit()
     await db.refresh(document)
     return document
+
 
 async def update_document_status(
     db: AsyncSession,
@@ -62,7 +67,9 @@ async def update_document_status(
     await db.refresh(document)
     return document
 
+
 # ── NUEVA FUNCIÓN PARA APRENDIZAJE CONTINUO ──────────────
+
 
 async def create_data_correction(
     db: AsyncSession,
@@ -80,6 +87,7 @@ async def create_data_correction(
     await db.commit()
     await db.refresh(correction)
     return correction
+
 
 async def get_recent_corrections(
     db: AsyncSession,

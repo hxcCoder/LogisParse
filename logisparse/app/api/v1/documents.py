@@ -22,16 +22,16 @@ from app.api.deps import get_current_user, get_db, get_settings_dep
 from app.core.config import Settings
 from app.core.exceptions import DocumentNotFound
 from app.crud.crud_document import (
+    create_data_correction,  # <-- NUEVO
     create_document,
     get_document_by_id,
+    get_recent_corrections,  # <-- NUEVO
     get_user_documents,
     update_document_status,
-    get_recent_corrections,          # <-- NUEVO
-    create_data_correction,          # <-- NUEVO
 )
 from app.models.document import DocumentStatus
 from app.models.user import User
-from app.schemas.document import DocumentResponse, DataCorrectionCreate, DataCorrectionResponse
+from app.schemas.document import DataCorrectionCreate, DataCorrectionResponse, DocumentResponse
 from app.services.document_extractor import extract_document
 from app.services.upload_validation import read_and_validate_upload
 
@@ -129,7 +129,7 @@ async def upload_document(
     # NUEVA LÓGICA DE NEGOCIO SaaS (AUDITORÍA)
     # ==========================================
     score = extracted_data.confidence_score or 0.0
-    
+
     # Decidimos el estado final basado en la confianza de nuestros adaptadores
     final_status = DocumentStatus.EXTRACTED
     if score < 80.0:
@@ -195,6 +195,7 @@ async def get_document(
 
 # ─── NUEVO ENDPOINT PARA APRENDIZAJE CONTINUO ──────────────
 
+
 @router.post(
     "/{document_id}/corrections",
     response_model=DataCorrectionResponse,
@@ -219,12 +220,12 @@ async def submit_correction(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied",
         )
-    
+
     # Guardar la corrección
     correction = await create_data_correction(
         db=db,
         document_id=document_id,
         correction_in=correction_in,
     )
-    
+
     return DataCorrectionResponse.model_validate(correction)

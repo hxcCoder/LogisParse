@@ -19,6 +19,7 @@ from app.services.extractors.generic_llm_adapter import GenericLLMAdapter
 
 logger = logging.getLogger(__name__)
 
+
 # ----------------------------------------------
 # LIMPIEZA DE TEXTO
 # ----------------------------------------------
@@ -27,27 +28,28 @@ def clean_extracted_text(text: str) -> str:
     Elimina líneas que parecen ruido: encabezados de tabla, líneas con solo números,
     líneas con mayúsculas sostenidas (ej. "CONCEPTO", "PORCENTAJE"), etc.
     """
-    lines = text.split('\n')
+    lines = text.split("\n")
     cleaned = []
     for line in lines:
         line = line.strip()
         if not line:
             continue
         # Saltar líneas que son solo números, guiones, barras, etc.
-        if re.match(r'^[\d\s\-\/\.\,\%\$]+$', line):
+        if re.match(r"^[\d\s\-\/\.\,\%\$]+$", line):
             continue
         # Saltar líneas en mayúsculas que parecen encabezados de tabla (más de 4 letras mayúsculas)
-        if re.match(r'^[A-Z\s]{5,}$', line):
+        if re.match(r"^[A-Z\s]{5,}$", line):
             continue
         # Saltar líneas que empiezan con "PAGO CON", "CONCEPTO", etc.
-        if re.match(r'^(PAGO|CONCEPTO|PORCENTAJE|CÁLCULO|RETENCIONES)', line, re.IGNORECASE):
+        if re.match(r"^(PAGO|CONCEPTO|PORCENTAJE|CÁLCULO|RETENCIONES)", line, re.IGNORECASE):
             continue
         # Saltar líneas que son etiquetas de tabla como "Seguro Invalidez..." (pero las dejamos si tienen información útil)
         # Mejor: si la línea tiene una etiqueta larga sin dos puntos, la saltamos
-        if ':' not in line and len(line.split()) > 5:
+        if ":" not in line and len(line.split()) > 5:
             continue
         cleaned.append(line)
-    return '\n'.join(cleaned)
+    return "\n".join(cleaned)
+
 
 # ----------------------------------------------
 # VALIDACIÓN SEMÁNTICA DE CAMPOS
@@ -58,66 +60,89 @@ def validate_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
     """
     # Lista de ciudades chilenas comunes (puedes expandirla)
     CIUDADES_CHILENAS = [
-        "Santiago", "Puerto Montt", "Concepción", "Valparaíso", "Viña del Mar",
-        "Antofagasta", "Temuco", "Rancagua", "Talca", "Chillán", "Los Ángeles",
-        "Coyhaique", "Punta Arenas", "Iquique", "Arica", "Calama", "Copiapó",
-        "La Serena", "Coquimbo", "Valdivia", "Osorno", "Castro", "Ancud"
+        "Santiago",
+        "Puerto Montt",
+        "Concepción",
+        "Valparaíso",
+        "Viña del Mar",
+        "Antofagasta",
+        "Temuco",
+        "Rancagua",
+        "Talca",
+        "Chillán",
+        "Los Ángeles",
+        "Coyhaique",
+        "Punta Arenas",
+        "Iquique",
+        "Arica",
+        "Calama",
+        "Copiapó",
+        "La Serena",
+        "Coquimbo",
+        "Valdivia",
+        "Osorno",
+        "Castro",
+        "Ancud",
     ]
+
     # Normalizar: convertir a título (primera letra mayúscula, resto minúscula)
     def normalize_city(name: str) -> str:
-        return ' '.join(word.capitalize() for word in name.lower().split())
+        return " ".join(word.capitalize() for word in name.lower().split())
 
     validated = {}
-    
+
     for campo, valor in data.items():
         if not valor or not isinstance(valor, str) or len(valor.strip()) < 2:
             validated[campo] = None
             continue
-        
+
         valor = valor.strip()
-        
+
         if campo in ("origen", "destino"):
             # Debe ser un nombre de ciudad (solo letras y espacios, no más de 3 palabras)
-            if re.match(r'^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2}$', valor):
+            if re.match(r"^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2}$", valor):
                 # Verificar si está en la lista de ciudades (o al menos que parezca ciudad)
                 # Si no está, la normalizamos a título y la aceptamos igual
                 validated[campo] = normalize_city(valor)
             else:
                 validated[campo] = None
-        
+
         elif campo == "chofer":
             # Debe ser nombre y apellido (dos palabras con mayúscula)
-            if re.match(r'^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$', valor):
+            if re.match(r"^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$", valor):
                 validated[campo] = valor
             else:
                 validated[campo] = None
-        
+
         elif campo == "fecha_despacho":
             # Formato dd/mm/aaaa o aaaa-mm-dd
-            if re.match(r'^\d{2}/\d{2}/\d{4}$', valor) or re.match(r'^\d{4}-\d{2}-\d{2}$', valor):
+            if re.match(r"^\d{2}/\d{2}/\d{4}$", valor) or re.match(r"^\d{4}-\d{2}-\d{2}$", valor):
                 validated[campo] = valor
             else:
                 validated[campo] = None
-        
+
         elif campo == "numero_guia":
             # Solo números
-            if re.match(r'^\d+$', valor):
+            if re.match(r"^\d+$", valor):
                 validated[campo] = valor
             else:
                 validated[campo] = None
-        
+
         elif campo == "patente_camion":
             # Formato XX-XX-12 o XX-1234 (o sin guiones)
-            if re.match(r'^[A-Z]{2}-?[A-Z]{2}-?\d{2}$', valor) or re.match(r'^[A-Z]{2}-?\d{4}$', valor):
+            if re.match(r"^[A-Z]{2}-?[A-Z]{2}-?\d{2}$", valor) or re.match(
+                r"^[A-Z]{2}-?\d{4}$", valor
+            ):
                 validated[campo] = valor.upper()
             else:
                 validated[campo] = None
-        
+
         else:
             # Otros campos: se pasan tal cual
             validated[campo] = valor
-    
+
     return validated
+
 
 # ----------------------------------------------
 # EXTRACCIÓN DE TEXTO
@@ -141,6 +166,7 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
         logger.exception("PDF extraction failed")
         return ""
 
+
 def extract_text_from_image(file_bytes: bytes) -> str:
     try:
         import pytesseract
@@ -156,12 +182,14 @@ def extract_text_from_image(file_bytes: bytes) -> str:
         logger.exception("Image OCR failed")
         return ""
 
+
 def extract_text(file_bytes: bytes, content_type: str) -> str:
     if content_type == "application/pdf":
         return extract_text_from_pdf(file_bytes)
     if content_type in ("image/png", "image/jpeg", "image/jpg"):
         return extract_text_from_image(file_bytes)
     return ""
+
 
 # ----------------------------------------------
 # ORQUESTADOR PRINCIPAL
@@ -173,7 +201,7 @@ async def extract_document(
     settings: Settings,
     correction_history: list[dict] | None = None,
 ) -> ExtractedLogisticsData:
-    
+
     if len(file_bytes) < 20:
         raise ValueError("file too small")
 
@@ -203,11 +231,11 @@ async def extract_document(
 
     # 6. Calcular confianza
     score = adapter.calculate_confidence(raw_data)
-    
+
     # 7. Si confianza baja o faltan críticos, enriquecer con IA
     campos_criticos = ["numero_guia", "patente_camion"]
     faltan_criticos = any(not raw_data.get(campo) for campo in campos_criticos)
-    
+
     if (score < 70 or faltan_criticos) and not isinstance(adapter, GenericLLMAdapter):
         logger.info("Confianza baja (%s) o faltan críticos. Enriqueciendo con IA genérica.", score)
         generic_adapter = GenericLLMAdapter()
@@ -217,18 +245,20 @@ async def extract_document(
             settings=settings,
             correction_history=correction_history,
         )
-        
+
         # Fusionar: los valores de la IA solo se usan si el adaptador específico no los tiene
         for key, value in ai_data.items():
             valor_actual = raw_data.get(key)
-            if not valor_actual or (isinstance(valor_actual, str) and len(valor_actual.split()) > 3):
+            if not valor_actual or (
+                isinstance(valor_actual, str) and len(valor_actual.split()) > 3
+            ):
                 if isinstance(value, str) and len(value.split()) > 3:
                     continue
                 raw_data[key] = value
-        
+
         # Re-validar después de la fusión
         raw_data = validate_extracted_data(raw_data)
-        
+
         raw_data["adapter_used"] = f"{adapter.__class__.__name__} + GenericLLM"
         score = adapter.calculate_confidence(raw_data)
         raw_data["confidence_score"] = score
@@ -238,6 +268,8 @@ async def extract_document(
         if "adapter_used" not in raw_data:
             raw_data["adapter_used"] = adapter.__class__.__name__
 
-    logger.info("Extracción finalizada. Adaptador: %s | Confianza: %s", raw_data.get("adapter_used"), score)
+    logger.info(
+        "Extracción finalizada. Adaptador: %s | Confianza: %s", raw_data.get("adapter_used"), score
+    )
 
     return ExtractedLogisticsData(**raw_data)

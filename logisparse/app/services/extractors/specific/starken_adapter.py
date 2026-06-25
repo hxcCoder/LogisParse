@@ -1,16 +1,17 @@
 import re
-from typing import Dict, Any, Optional
+from typing import Any
+
 from app.services.extractors.base_adapter import BaseAdapter
 
+
 class StarkenAdapter(BaseAdapter):
-    
     async def extract_data(
         self,
         text: str,
         image_bytes: bytes | None = None,
         settings: Any = None,
         correction_history: list[dict] | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         # Patrones mejorados:
         # - Origen/Destino: capturan nombres de ciudades con mayúscula y acentos, máximo 3 palabras
         # - Chofer: nombre y apellido (dos palabras con mayúscula)
@@ -19,31 +20,29 @@ class StarkenAdapter(BaseAdapter):
         # - Patente: evita capturar "GDE-2026" usando negative lookbehind
         patrones = {
             "origen": re.compile(
-                r'(?:Origen|Origen Detallado):\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})',
-                re.IGNORECASE
+                r"(?:Origen|Origen Detallado):\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})",
+                re.IGNORECASE,
             ),
             "destino": re.compile(
-                r'(?:Destino|Destino Detallado):\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})',
-                re.IGNORECASE
+                r"(?:Destino|Destino Detallado):\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})",
+                re.IGNORECASE,
             ),
             "chofer": re.compile(
-                r'(?:Chofer|Conductor):\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)',
-                re.IGNORECASE
+                r"(?:Chofer|Conductor):\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)",
+                re.IGNORECASE,
             ),
             "fecha_despacho": re.compile(
-                r'(?:Fecha(?: de Salida)?|FchEmis):\s*(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})',
-                re.IGNORECASE
+                r"(?:Fecha(?: de Salida)?|FchEmis):\s*(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})",
+                re.IGNORECASE,
             ),
             "numero_guia": re.compile(
-                r'(?:Guía|GUIA|GDE)\s*(?:N°|Nº|Nro\.?)?\s*(\d+)',
-                re.IGNORECASE
+                r"(?:Guía|GUIA|GDE)\s*(?:N°|Nº|Nro\.?)?\s*(\d+)", re.IGNORECASE
             ),
             "patente_camion": re.compile(
-                r'(?<!GDE-)([A-Z]{2}-?[A-Z]{2}-?\d{2}|[A-Z]{2}-?\d{4})',
-                re.IGNORECASE
+                r"(?<!GDE-)([A-Z]{2}-?[A-Z]{2}-?\d{2}|[A-Z]{2}-?\d{4})", re.IGNORECASE
             ),
         }
-        
+
         extracted = {}
         for key, pattern in patrones.items():
             match = pattern.search(text)
@@ -52,17 +51,21 @@ class StarkenAdapter(BaseAdapter):
                 extracted[key] = value if value else None
             else:
                 extracted[key] = None
-        
+
         # Si no se encontró origen, intentar buscar con "Desde:" o similar
         if not extracted.get("origen"):
-            fallback = re.search(r'(?:Desde|Origen):?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})', text, re.IGNORECASE)
+            fallback = re.search(
+                r"(?:Desde|Origen):?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})",
+                text,
+                re.IGNORECASE,
+            )
             if fallback:
                 extracted["origen"] = fallback.group(1).strip()
-        
+
         extracted["adapter_used"] = "StarkenAdapter"
         return extracted
 
-    def calculate_confidence(self, extracted_data: Dict[str, Any]) -> float:
+    def calculate_confidence(self, extracted_data: dict[str, Any]) -> float:
         # Pesos para cada campo (solo si el valor es válido)
         pesos = {
             "origen": 0.15,

@@ -1,9 +1,9 @@
 """Tests for Pydantic schemas validation."""
 
-from app.models.document import DocumentStatus
 import pytest
 from pydantic import ValidationError
 
+from app.models.document import DocumentStatus
 from app.schemas.document import DocumentResponse
 from app.schemas.extraction import ExtractedLogisticsData
 from app.schemas.token import TokenResponse
@@ -48,6 +48,7 @@ def test_extracted_logistics_data_validation() -> None:
     assert data.origen == "Puerto Montt"
     # ¡Elimina el assert data.items que tenías aquí abajo!
 
+
 def test_document_response_validation() -> None:
     """Test DocumentResponse schema."""
     from datetime import datetime
@@ -56,11 +57,11 @@ def test_document_response_validation() -> None:
         id="doc-123",
         filename="guide.pdf",
         content_type="application/pdf",
-        status=DocumentStatus.PENDING,# type: ignore
+        status=DocumentStatus.PENDING,  # type: ignore
         created_at=datetime.now(),
         updated_at=datetime.now(),
         extracted_data=None,
-        error_logs=None
+        error_logs=None,
     )
     assert doc.id == "doc-123"
     assert doc.filename == "guide.pdf"

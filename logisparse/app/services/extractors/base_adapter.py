@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Any
+
 
 class BaseAdapter(ABC):
     @abstractmethod
@@ -8,10 +9,10 @@ class BaseAdapter(ABC):
         text: str,
         image_bytes: bytes | None = None,
         settings: Any = None,
-        correction_history: list[dict] | None = None,   # <-- AÑADIR
-    ) -> Dict[str, Any]:
+        correction_history: list[dict] | None = None,  # <-- AÑADIR
+    ) -> dict[str, Any]:
         pass
 
     @abstractmethod
-    def calculate_confidence(self, extracted_data: Dict[str, Any]) -> float:
+    def calculate_confidence(self, extracted_data: dict[str, Any]) -> float:
         pass
