@@ -13,33 +13,40 @@ class StarkenAdapter(BaseAdapter):
         correction_history: list[dict] | None = None,
     ) -> dict[str, Any]:
         # Patrones mejorados:
-        # - Origen/Destino: capturan nombres de ciudades con mayúscula y acentos, máximo 3 palabras
+        # - Origen/Destino: capturan nombres de ciudades con mayúscula y acentos,
+        #   máximo 3 palabras
         # - Chofer: nombre y apellido (dos palabras con mayúscula)
         # - Fecha: formato dd/mm/aaaa o aaaa-mm-dd
         # - Guía: número después de "Guía", "GDE", etc.
         # - Patente: evita capturar "GDE-2026" usando negative lookbehind
         patrones = {
             "origen": re.compile(
-                r"(?:Origen|Origen Detallado):\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})",
+                r"(?:Origen|Origen Detallado):\s*"
+                r"([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})",
                 re.IGNORECASE,
             ),
             "destino": re.compile(
-                r"(?:Destino|Destino Detallado):\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})",
+                r"(?:Destino|Destino Detallado):\s*"
+                r"([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})",
                 re.IGNORECASE,
             ),
             "chofer": re.compile(
-                r"(?:Chofer|Conductor):\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)",
+                r"(?:Chofer|Conductor):\s*"
+                r"([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)",
                 re.IGNORECASE,
             ),
             "fecha_despacho": re.compile(
-                r"(?:Fecha(?: de Salida)?|FchEmis):\s*(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})",
+                r"(?:Fecha(?: de Salida)?|FchEmis):\s*"
+                r"(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})",
                 re.IGNORECASE,
             ),
             "numero_guia": re.compile(
-                r"(?:Guía|GUIA|GDE)\s*(?:N°|Nº|Nro\.?)?\s*(\d+)", re.IGNORECASE
+                r"(?:Guía|GUIA|GDE)\s*(?:N°|Nº|Nro\.?)?\s*(\d+)",
+                re.IGNORECASE,
             ),
             "patente_camion": re.compile(
-                r"(?<!GDE-)([A-Z]{2}-?[A-Z]{2}-?\d{2}|[A-Z]{2}-?\d{4})", re.IGNORECASE
+                r"(?<!GDE-)([A-Z]{2}-?[A-Z]{2}-?\d{2}|[A-Z]{2}-?\d{4})",
+                re.IGNORECASE,
             ),
         }
 
@@ -55,7 +62,8 @@ class StarkenAdapter(BaseAdapter):
         # Si no se encontró origen, intentar buscar con "Desde:" o similar
         if not extracted.get("origen"):
             fallback = re.search(
-                r"(?:Desde|Origen):?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})",
+                r"(?:Desde|Origen):?\s*"
+                r"([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})",
                 text,
                 re.IGNORECASE,
             )
@@ -78,7 +86,8 @@ class StarkenAdapter(BaseAdapter):
         score = 0.0
         for campo, peso in pesos.items():
             valor = extracted_data.get(campo)
-            # Validación simple: no debe ser None, no debe ser string vacío, y para origen/destino no debe tener más de 3 palabras
+            # Validación simple: no debe ser None, no debe ser string vacío,
+            # y para origen/destino no debe tener más de 3 palabras
             if valor and isinstance(valor, str) and len(valor) > 1:
                 if campo in ("origen", "destino") and len(valor.split()) > 3:
                     continue

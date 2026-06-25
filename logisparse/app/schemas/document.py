@@ -1,13 +1,13 @@
 # app/schemas/document.py
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
 from app.schemas.extraction import ExtractedLogisticsData
 
 
-class DocumentStatus(str, Enum):
+class DocumentStatus(StrEnum):
     PENDING = "PENDING"
     PROCESSING = "PROCESSING"
     EXTRACTED = "EXTRACTED"

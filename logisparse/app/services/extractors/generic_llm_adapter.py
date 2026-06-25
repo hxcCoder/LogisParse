@@ -26,16 +26,19 @@ class GenericLLMAdapter(BaseAdapter):
             }
 
         client = AsyncOpenAI(
-            api_key=settings.OPENAI_API_KEY, base_url="https://api.groq.com/openai/v1"
+            api_key=settings.OPENAI_API_KEY,
+            base_url="https://api.groq.com/openai/v1",
         )
 
         # Prompt mejorado: instrucciones estrictas y claras
         system_prompt = (
             "Eres un experto en documentos logísticos y tributarios chilenos. "
-            "Extrae SOLO los siguientes campos: origen, destino, patente_camion, chofer, fecha_despacho, numero_guia. "
+            "Extrae SOLO los siguientes campos: origen, destino, patente_camion, "
+            "chofer, fecha_despacho, numero_guia. "
             "SI UN CAMPO NO APARECE EXPLÍCITAMENTE EN EL TEXTO, DEVUELVE null. "
             "NO INVENTES INFORMACIÓN. NO USES FRASES LARGAS. "
-            "Para origen y destino, usa nombres de ciudades chilenas (ej: Santiago, Puerto Montt, Concepción). "
+            "Para origen y destino, usa nombres de ciudades chilenas "
+            "(ej: Santiago, Puerto Montt, Concepción). "
             "Para chofer, usa nombre y apellido (ej: Juan Pérez). "
             "Para patente, usa formato XX-XX-12 o XX-1234. "
             "Para número de guía, usa solo números."
@@ -47,11 +50,17 @@ class GenericLLMAdapter(BaseAdapter):
         if correction_history:
             examples = "\n".join(
                 [
-                    f"Corrección previa: Campo '{c['field_name']}' fue corregido de '{c['original_value']}' a '{c['corrected_value']}'."
+                    (
+                        f"Corrección previa: Campo '{c['field_name']}' fue corregido "
+                        f"de '{c['original_value']}' a '{c['corrected_value']}'."
+                    )
                     for c in correction_history[:5]
                 ]
             )
-            user_content += f"\n\nContexto de correcciones previas:\n{examples}\nTen en cuenta estas correcciones al extraer."
+            user_content += (
+                f"\n\nContexto de correcciones previas:\n{examples}\n"
+                "Ten en cuenta estas correcciones al extraer."
+            )
 
         input_messages: list[Any] = [
             {"role": "system", "content": system_prompt},
@@ -69,7 +78,9 @@ class GenericLLMAdapter(BaseAdapter):
             parsed_data = response.choices[0].message.parsed
 
             if not parsed_data:
-                logger.error("OpenAI falló al estructurar la respuesta (parsed es None).")
+                logger.error(
+                    "OpenAI falló al estructurar la respuesta (parsed es None)."
+                )
                 return {"adapter_used": "GenericLLMAdapter (Error de Parseo)"}
 
             ai_data = parsed_data.model_dump()

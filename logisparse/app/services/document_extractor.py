@@ -43,8 +43,7 @@ def clean_extracted_text(text: str) -> str:
         # Saltar líneas que empiezan con "PAGO CON", "CONCEPTO", etc.
         if re.match(r"^(PAGO|CONCEPTO|PORCENTAJE|CÁLCULO|RETENCIONES)", line, re.IGNORECASE):
             continue
-        # Saltar líneas que son etiquetas de tabla como "Seguro Invalidez..." (pero las dejamos si tienen información útil)
-        # Mejor: si la línea tiene una etiqueta larga sin dos puntos, la saltamos
+        # Saltar líneas que son etiquetas de tabla como "Seguro Invalidez..."
         if ":" not in line and len(line.split()) > 5:
             continue
         cleaned.append(line)
@@ -58,34 +57,6 @@ def validate_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
     """
     Valida cada campo extraído y lo deja como None si no cumple con el formato esperado.
     """
-    # Lista de ciudades chilenas comunes (puedes expandirla)
-    CIUDADES_CHILENAS = [
-        "Santiago",
-        "Puerto Montt",
-        "Concepción",
-        "Valparaíso",
-        "Viña del Mar",
-        "Antofagasta",
-        "Temuco",
-        "Rancagua",
-        "Talca",
-        "Chillán",
-        "Los Ángeles",
-        "Coyhaique",
-        "Punta Arenas",
-        "Iquique",
-        "Arica",
-        "Calama",
-        "Copiapó",
-        "La Serena",
-        "Coquimbo",
-        "Valdivia",
-        "Osorno",
-        "Castro",
-        "Ancud",
-    ]
-
-    # Normalizar: convertir a título (primera letra mayúscula, resto minúscula)
     def normalize_city(name: str) -> str:
         return " ".join(word.capitalize() for word in name.lower().split())
 
@@ -101,8 +72,6 @@ def validate_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
         if campo in ("origen", "destino"):
             # Debe ser un nombre de ciudad (solo letras y espacios, no más de 3 palabras)
             if re.match(r"^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2}$", valor):
-                # Verificar si está en la lista de ciudades (o al menos que parezca ciudad)
-                # Si no está, la normalizamos a título y la aceptamos igual
                 validated[campo] = normalize_city(valor)
             else:
                 validated[campo] = None

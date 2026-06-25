@@ -13,7 +13,11 @@ from app.services.extractors.specific.starken_adapter import StarkenAdapter
 async def test_starken_adapter_successful_extraction():
     adapter = StarkenAdapter()
     # Agregamos el Origen al texto para que la aserción final funcione
-    text = "Documento de transporte STARKEN. GUIA N° 987654. Patente del vehículo: RT-ZX-11. Conductor: Juan. Origen: Centro Distribución Starken."
+    text = (
+        "Documento de transporte STARKEN. GUIA N° 987654. "
+        "Patente del vehículo: RT-ZX-11. Conductor: Juan. "
+        "Origen: Centro Distribución Starken."
+    )
 
     result = await adapter.extract_data(text)
 
