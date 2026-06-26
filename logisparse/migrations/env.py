@@ -47,12 +47,12 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    """Ejecutar migraciones en modo asíncrono con NullPool."""
-    # Crear el engine con NullPool y statement_cache_size=0
+    """Ejecutar migraciones en modo asíncrono con NullPool y sin prepared statements."""
+    # Deshabilitar prepared statements para PgBouncer
     engine = create_async_engine(
         settings.DATABASE_URL,
-        poolclass=pool.NullPool,  # <-- Cada conexión es nueva
-        connect_args={"statement_cache_size": 0},  # <-- Deshabilitar prepared statements
+        poolclass=pool.NullPool,
+        connect_args={"statement_cache_size": 0},  # <-- CLAVE
         echo=False,
     )
 
@@ -60,7 +60,6 @@ async def run_async_migrations() -> None:
         await connection.run_sync(do_run_migrations)
 
     await engine.dispose()
-
 
 def run_migrations_online() -> None:
     """Ejecutar migraciones en modo online."""

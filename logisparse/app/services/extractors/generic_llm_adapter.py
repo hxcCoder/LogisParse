@@ -32,16 +32,14 @@ class GenericLLMAdapter(BaseAdapter):
 
         # Prompt mejorado: instrucciones estrictas y claras
         system_prompt = (
-            "Eres un experto en documentos logísticos y tributarios chilenos. "
-            "Extrae SOLO los siguientes campos: origen, destino, patente_camion, "
-            "chofer, fecha_despacho, numero_guia. "
-            "SI UN CAMPO NO APARECE EXPLÍCITAMENTE EN EL TEXTO, DEVUELVE null. "
-            "NO INVENTES INFORMACIÓN. NO USES FRASES LARGAS. "
-            "Para origen y destino, usa nombres de ciudades chilenas "
-            "(ej: Santiago, Puerto Montt, Concepción). "
-            "Para chofer, usa nombre y apellido (ej: Juan Pérez). "
-            "Para patente, usa formato XX-XX-12 o XX-1234. "
-            "Para número de guía, usa solo números."
+            "Eres un experto en documentos logísticos y tributarios chilenos (SII). "
+    "Extrae SOLO los siguientes campos de la guía de despacho: "
+    "origen, destino, patente_camion, chofer, fecha_despacho, numero_guia. "
+    "Los datos suelen estar dentro de tablas. Busca los campos específicos. "
+    "Para origen y destino, usa nombres de ciudades chilenas. "
+    "Para patente, busca en la sección 'INDIVIDUALIZACIÓN DEL TRANSPORTE'. "
+    "Para número de guía, busca 'GDE-' o 'Folio Electrónico'. "
+    "NO INVENTES INFORMACIÓN. SI NO ENCUENTRAS UN CAMPO, DEVUELVE null."
         )
 
         user_content = f"Texto del documento:\n{text[:2000]}"

@@ -61,7 +61,7 @@ def validate_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
     def normalize_city(name: str) -> str:
         return " ".join(word.capitalize() for word in name.lower().split())
 
-    validated: dict[str, Any] = {}  # <--- ANOTACIÓN AÑADIDA AQUÍ
+    validated: dict[str, Any] = {}
 
     for campo, valor in data.items():
         if not valor or not isinstance(valor, str) or len(valor.strip()) < 2:
@@ -84,7 +84,12 @@ def validate_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
                 validated[campo] = None
 
         elif campo == "fecha_despacho":
-            if re.match(r"^\d{2}/\d{2}/\d{4}$", valor) or re.match(r"^\d{4}-\d{2}-\d{2}$", valor):
+            # Aceptar dd/mm/aaaa o dd-mm-aaaa
+            if re.match(r"^\d{2}[/-]\d{2}[/-]\d{4}$", valor):
+                # Convertir a dd/mm/aaaa para consistencia
+                if '-' in valor:
+                    partes = valor.split('-')
+                    valor = f"{partes[0]}/{partes[1]}/{partes[2]}"
                 validated[campo] = valor
             else:
                 validated[campo] = None
@@ -233,8 +238,25 @@ async def extract_document(
         if "adapter_used" not in raw_data:
             raw_data["adapter_used"] = adapter.__class__.__name__
 
+    # ==========================================
+    # NUEVO: Extraer número de guía del nombre del archivo
+    # ==========================================
+    if not raw_data.get("numero_guia") and filename:
+        # Buscar GDE-YYYY-NNNNN o GDE YYYY NNNNN en el nombre del archivo
+        match = re.search(r'GDE[- ]?(\d{4}[- ]?\d+)', filename, re.IGNORECASE)
+        if match:
+            raw_data["numero_guia"] = match.group(1).replace(" ", "").replace("-", "")
+            logger.info(f"✅ Número de guía extraído del nombre del archivo: {raw_data['numero_guia']}")
+
+            # Recalcular confianza con el nuevo campo
+            score = adapter.calculate_confidence(raw_data)
+            raw_data["confidence_score"] = score
+            logger.info(f"📊 Confianza recalculada: {score}")
+
     logger.info(
-        "Extracción finalizada. Adaptador: %s | Confianza: %s", raw_data.get("adapter_used"), score
+        "Extracción finalizada. Adaptador: %s | Confianza: %s",
+        raw_data.get("adapter_used"),
+        raw_data.get("confidence_score")
     )
 
     return ExtractedLogisticsData(**raw_data)
