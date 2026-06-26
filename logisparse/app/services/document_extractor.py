@@ -246,7 +246,9 @@ async def extract_document(
         match = re.search(r'GDE[- ]?(\d{4}[- ]?\d+)', filename, re.IGNORECASE)
         if match:
             raw_data["numero_guia"] = match.group(1).replace(" ", "").replace("-", "")
-            logger.info(f"✅ Número de guía extraído del nombre del archivo: {raw_data['numero_guia']}")
+            logger.info(
+                f"✅ Número de guía extraído del nombre del archivo: {raw_data['numero_guia']}"
+                )
 
             # Recalcular confianza con el nuevo campo
             score = adapter.calculate_confidence(raw_data)

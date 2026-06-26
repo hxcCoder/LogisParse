@@ -1,8 +1,9 @@
 # app/services/extractors/specific/chilean_guia_adapter.py
 
-import re
 import logging
+import re
 from typing import Any
+
 from app.services.extractors.base_adapter import BaseAdapter
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,6 @@ class ChileanGuiaAdapter(BaseAdapter):
         extracted['destino'] = "Santiago"
 
         # 5. Patente – buscar con regex más flexible
-        #    Buscar "PATENTE VEHÍCULO" seguido de cualquier texto hasta encontrar un patrón de patente
         patente_match = re.search(
             r'PATENTE\s*VEH[IÍ]CULO.*?([A-Z]{2,3}[\s\-]?[A-Z]{2}[\s\-]?\d{2,3})',
             clean,
