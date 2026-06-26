@@ -3,7 +3,6 @@
 import logging
 import re
 from typing import Any
-
 from app.services.extractors.base_adapter import BaseAdapter
 
 logger = logging.getLogger(__name__)

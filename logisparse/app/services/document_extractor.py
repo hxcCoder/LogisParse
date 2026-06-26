@@ -247,7 +247,7 @@ async def extract_document(
         if match:
             raw_data["numero_guia"] = match.group(1).replace(" ", "").replace("-", "")
             logger.info(
-                f"✅ Número de guía extraído del nombre del archivo: {raw_data['numero_guia']}"
+                f"Número de guía extraído del archivo: {raw_data['numero_guia']}"
                 )
 
             # Recalcular confianza con el nuevo campo
