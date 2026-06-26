@@ -8,12 +8,17 @@ pydantic-settings>=2.6.0
 python-multipart>=0.0.20
 
 # =============================================
+# Validación de emails (para Pydantic)
+# =============================================
+email-validator>=2.0.0
+
+# =============================================
 # Database & Migrations
 # =============================================
 sqlalchemy>=2.0.36
 asyncpg>=0.30.0
 alembic>=1.14.0
-aiosqlite>=0.21.0  # Para pruebas en memoria
+aiosqlite>=0.21.0
 
 # =============================================
 # Security (JWT, Password hashing)
@@ -55,8 +60,3 @@ mypy>=1.13.0
 types-python-jose>=3.3.4.20240123
 types-passlib>=1.7.7.20240405
 types-Pillow>=10.2.0.20240822
-
-# =============================================
-# Plugin para mypy (pydantic)
-# =============================================
-pydantic>=2.10.0  # (ya incluido arriba, pero lo pongo por claridad)
