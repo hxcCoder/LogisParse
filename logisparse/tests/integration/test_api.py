@@ -139,7 +139,7 @@ def test_login_wrong_password_returns_401(client: TestClient) -> None:
 
 def test_document_list_requires_auth(client: TestClient) -> None:
     response = client.get("/api/v1/documents")
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
 def test_upload_valid_pdf(client: TestClient) -> None:

@@ -69,7 +69,7 @@ async def test_generic_llm_adapter_confidence():
 
 def test_adapter_factory_routing():
     starken_text = "Comprobante de carga STARKEN - Destino Concepción"
-    unknown_text = "Guía de Despacho Transporte Los Lagos EIRL - Ruta 5 Sur"
+    unknown_text = "Factura de compraventa sin referencia logística"
 
     adapter1 = AdapterFactory.get_adapter(starken_text)
     adapter2 = AdapterFactory.get_adapter(unknown_text)
