@@ -77,6 +77,7 @@ def test_adapter_factory_routing():
     assert isinstance(adapter1, StarkenAdapter)
     assert isinstance(adapter2, GenericLLMAdapter)
 
+
 def test_classifier_identifies_starken():
     assert DocumentClassifier.identify_company("envío por starken hoy") == "starken"
     assert DocumentClassifier.identify_company("TURBUS CARGO LOGISTICS") == "starken"
