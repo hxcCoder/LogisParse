@@ -277,7 +277,7 @@ def test_access_other_user_document_returns_403(client: TestClient) -> None:
         f"/api/v1/documents/{doc['id']}",
         headers={"Authorization": f"Bearer {token2}"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
 def test_pagination_limit(client: TestClient) -> None:

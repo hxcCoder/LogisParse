@@ -69,14 +69,13 @@ async def test_generic_llm_adapter_confidence():
 
 def test_adapter_factory_routing():
     starken_text = "Comprobante de carga STARKEN - Destino Concepción"
-    unknown_text = "Factura de compraventa sin referencia logística"
+    unknown_text = "Factura de compraventa sin referencia logística"  # <--- CAMBIADO
 
     adapter1 = AdapterFactory.get_adapter(starken_text)
     adapter2 = AdapterFactory.get_adapter(unknown_text)
 
     assert isinstance(adapter1, StarkenAdapter)
     assert isinstance(adapter2, GenericLLMAdapter)
-
 
 def test_classifier_identifies_starken():
     assert DocumentClassifier.identify_company("envío por starken hoy") == "starken"
