@@ -87,8 +87,8 @@ def validate_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
             # Aceptar dd/mm/aaaa o dd-mm-aaaa
             if re.match(r"^\d{2}[/-]\d{2}[/-]\d{4}$", valor):
                 # Convertir a dd/mm/aaaa para consistencia
-                if '-' in valor:
-                    partes = valor.split('-')
+                if "-" in valor:
+                    partes = valor.split("-")
                     valor = f"{partes[0]}/{partes[1]}/{partes[2]}"
                 validated[campo] = valor
             else:
@@ -243,12 +243,10 @@ async def extract_document(
     # ==========================================
     if not raw_data.get("numero_guia") and filename:
         # Buscar GDE-YYYY-NNNNN o GDE YYYY NNNNN en el nombre del archivo
-        match = re.search(r'GDE[- ]?(\d{4}[- ]?\d+)', filename, re.IGNORECASE)
+        match = re.search(r"GDE[- ]?(\d{4}[- ]?\d+)", filename, re.IGNORECASE)
         if match:
             raw_data["numero_guia"] = match.group(1).replace(" ", "").replace("-", "")
-            logger.info(
-                f"Número de guía extraído del archivo: {raw_data['numero_guia']}"
-                )
+            logger.info(f"Número de guía extraído del archivo: {raw_data['numero_guia']}")
 
             # Recalcular confianza con el nuevo campo
             score = adapter.calculate_confidence(raw_data)
@@ -258,7 +256,7 @@ async def extract_document(
     logger.info(
         "Extracción finalizada. Adaptador: %s | Confianza: %s",
         raw_data.get("adapter_used"),
-        raw_data.get("confidence_score")
+        raw_data.get("confidence_score"),
     )
 
     return ExtractedLogisticsData(**raw_data)

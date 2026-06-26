@@ -61,6 +61,7 @@ async def run_async_migrations() -> None:
 
     await engine.dispose()
 
+
 def run_migrations_online() -> None:
     """Ejecutar migraciones en modo online."""
     asyncio.run(run_async_migrations())

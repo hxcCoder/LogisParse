@@ -39,15 +39,15 @@ class DocumentClassifier:
                 return "chilean_guia"
 
         # Patrón GDE-YYYY-NNNNN
-        if re.search(r'GDE\s*[-:]?\s*\d{4}\s*[-:]?\s*\d+', text_upper):
+        if re.search(r"GDE\s*[-:]?\s*\d{4}\s*[-:]?\s*\d+", text_upper):
             return "chilean_guia"
 
         # Combinación de campos típicos
-        has_patente = re.search(r'PATENTE\s*VEH[IÍ]CULO', text_upper) is not None
-        has_chofer = re.search(r'CHOFER', text_upper) is not None
-        has_fecha_emision = re.search(r'FECHA\s*EMISI[ÓO]N', text_upper) is not None
-        has_transportista = re.search(r'TRANSPORTISTA', text_upper) is not None
-        has_origen_destino = re.search(r'DIRECCI[ÓO]N\s*DE\s*ORIGEN', text_upper) is not None
+        has_patente = re.search(r"PATENTE\s*VEH[IÍ]CULO", text_upper) is not None
+        has_chofer = re.search(r"CHOFER", text_upper) is not None
+        has_fecha_emision = re.search(r"FECHA\s*EMISI[ÓO]N", text_upper) is not None
+        has_transportista = re.search(r"TRANSPORTISTA", text_upper) is not None
+        has_origen_destino = re.search(r"DIRECCI[ÓO]N\s*DE\s*ORIGEN", text_upper) is not None
 
         if (
             sum([has_patente, has_chofer, has_fecha_emision, has_transportista, has_origen_destino])
@@ -80,7 +80,5 @@ class AdapterFactory:
             )
             return adapters[company_id]
 
-        logger.info(
-            f"❓ Documento no clasificado (tipo '{company_id}') → usando GenericLLMAdapter"
-        )
+        logger.info(f"❓ Documento no clasificado (tipo '{company_id}') → usando GenericLLMAdapter")
         return GenericLLMAdapter()
