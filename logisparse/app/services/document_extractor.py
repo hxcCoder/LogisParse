@@ -1,27 +1,34 @@
+# app/services/document_extractor.py
 """
 Orquestador de extracción para LogisParse SaaS.
-1. Extrae texto crudo (OCR / PDF).
-2. Limpia el texto (elimina basura de tablas, encabezados, etc.).
-3. Delega al AdapterFactory para enrutamiento inteligente.
-4. Valida semánticamente los campos extraídos.
-5. Soporta aprendizaje continuo a través de correction_history.
+Flujo completo:
+1. Extrae texto con AWS Textract (tablas + formularios) o fallback OCR local
+2. Mapea campos SII chilenos (RUT, folio, fecha, monto)
+3. Enriquece con adaptadores existentes (Starken, Guía, LLM)
+4. Valida semánticamente
+5. Genera Excel automáticamente
+6. Mueve archivo a /procesados para bandeja limpia
 """
 
 import logging
 import re
+from datetime import datetime
 from io import BytesIO
 from typing import Any
 
 from app.core.config import Settings
 from app.schemas.extraction import ExtractedLogisticsData
+from app.services.aws_textract_service import create_textract_service
+from app.services.excel_service import generate_excel_report
 from app.services.extractors.adapter_factory import AdapterFactory
 from app.services.extractors.generic_llm_adapter import GenericLLMAdapter
+from app.services.file_manager import create_file_manager
+from app.services.sii_mapper import map_sii_data
 
 logger = logging.getLogger(__name__)
 
-
 # ----------------------------------------------
-# LIMPIEZA DE TEXTO
+# LIMPIEZA DE TEXTO (existente)
 # ----------------------------------------------
 def clean_extracted_text(text: str) -> str:
     """
@@ -34,16 +41,12 @@ def clean_extracted_text(text: str) -> str:
         line = line.strip()
         if not line:
             continue
-        # Saltar líneas que son solo números, guiones, barras, etc.
         if re.match(r"^[\d\s\-\/\.\,\%\$]+$", line):
             continue
-        # Saltar líneas en mayúsculas que parecen encabezados de tabla (más de 4 letras mayúsculas)
         if re.match(r"^[A-Z\s]{5,}$", line):
             continue
-        # Saltar líneas que empiezan con "PAGO CON", "CONCEPTO", etc.
         if re.match(r"^(PAGO|CONCEPTO|PORCENTAJE|CÁLCULO|RETENCIONES)", line, re.IGNORECASE):
             continue
-        # Saltar líneas que son etiquetas de tabla como "Seguro Invalidez..."
         if ":" not in line and len(line.split()) > 5:
             continue
         cleaned.append(line)
@@ -51,7 +54,7 @@ def clean_extracted_text(text: str) -> str:
 
 
 # ----------------------------------------------
-# VALIDACIÓN SEMÁNTICA DE CAMPOS
+# VALIDACIÓN SEMÁNTICA (existente)
 # ----------------------------------------------
 def validate_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
     """
@@ -71,7 +74,6 @@ def validate_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
         valor = valor.strip()
 
         if campo in ("origen", "destino"):
-            # Debe ser un nombre de ciudad (solo letras y espacios, no más de 3 palabras)
             if re.match(r"^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2}$", valor):
                 validated[campo] = normalize_city(valor)
             else:
@@ -84,9 +86,7 @@ def validate_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
                 validated[campo] = None
 
         elif campo == "fecha_despacho":
-            # Aceptar dd/mm/aaaa o dd-mm-aaaa
             if re.match(r"^\d{2}[/-]\d{2}[/-]\d{4}$", valor):
-                # Convertir a dd/mm/aaaa para consistencia
                 if "-" in valor:
                     partes = valor.split("-")
                     valor = f"{partes[0]}/{partes[1]}/{partes[2]}"
@@ -115,7 +115,7 @@ def validate_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
 
 
 # ----------------------------------------------
-# EXTRACCIÓN DE TEXTO
+# EXTRACCIÓN LOCAL (fallback)
 # ----------------------------------------------
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     try:
@@ -154,6 +154,7 @@ def extract_text_from_image(file_bytes: bytes) -> str:
 
 
 def extract_text(file_bytes: bytes, content_type: str) -> str:
+    """Extracción local (fallback) según el tipo de contenido."""
     if content_type == "application/pdf":
         return extract_text_from_pdf(file_bytes)
     if content_type in ("image/png", "image/jpeg", "image/jpg"):
@@ -162,7 +163,39 @@ def extract_text(file_bytes: bytes, content_type: str) -> str:
 
 
 # ----------------------------------------------
-# ORQUESTADOR PRINCIPAL
+# EXTRACCIÓN CON AWS TEXTRACT (NUEVO)
+# ----------------------------------------------
+def extract_text_with_textract(
+    file_bytes: bytes,
+    content_type: str,
+) -> tuple[str, dict[str, Any]]:
+    """
+    Intenta extraer texto y estructuras (tablas/formularios) usando AWS Textract.
+    Si falla, vuelve automáticamente al OCR local.
+
+    Returns:
+        Tupla (texto_plano, datos_estructurados)
+    """
+    try:
+        textract = create_textract_service()
+        text = textract.extract_text(file_bytes)
+        structures = textract.extract_tables_and_forms(file_bytes)
+        logger.info("Textract extrajo %d caracteres de texto plano.", len(text))
+        logger.info(
+            "Textract encontró %d tablas y %d campos de formulario.",
+            len(structures.get("tables", [])),
+            len(structures.get("forms", {})),
+        )
+        return text, structures
+    except Exception as exc:
+        logger.warning("AWS Textract falló (%s). Usando OCR local.", exc)
+        # Fallback a extracción local
+        text = extract_text(file_bytes, content_type)
+        return text, {}
+
+
+# ----------------------------------------------
+# ORQUESTADOR PRINCIPAL (ACTUALIZADO)
 # ----------------------------------------------
 async def extract_document(
     file_bytes: bytes,
@@ -175,20 +208,30 @@ async def extract_document(
     if len(file_bytes) < 20:
         raise ValueError("file too small")
 
-    # 1. Extraer texto crudo
-    text = extract_text(file_bytes, content_type)
+    # ═══════════════════════════════════════════════
+    # 1. Extraer texto con Textract + fallback local
+    # ═══════════════════════════════════════════════
+    text, textract_data = extract_text_with_textract(file_bytes, content_type)
+
     if not text:
-        logger.info("No text extracted from %s", filename)
+        logger.info("No se extrajo texto de %s", filename)
         return ExtractedLogisticsData(confidence_score=0.0, adapter_used="None")
 
     # 2. Limpiar el texto (eliminar ruido)
     cleaned_text = clean_extracted_text(text)
     logger.debug("Texto limpio (primeros 200 chars): %s", cleaned_text[:200])
 
-    # 3. Obtener adaptador según clasificación
+    # ═══════════════════════════════════════════════
+    # 3. Mapeo de campos SII chilenos (NUEVO)
+    # ═══════════════════════════════════════════════
+    sii_data = map_sii_data(cleaned_text, textract_data)
+    logger.info("Campos SII mapeados: %s", sii_data)
+
+    # ═══════════════════════════════════════════════
+    # 4. Adaptador específico (existente)
+    # ═══════════════════════════════════════════════
     adapter = AdapterFactory.get_adapter(cleaned_text)
 
-    # 4. Extracción inicial
     raw_data = await adapter.extract_data(
         cleaned_text,
         image_bytes=file_bytes,
@@ -199,11 +242,21 @@ async def extract_document(
     # 5. Validación semántica de los campos extraídos
     raw_data = validate_extracted_data(raw_data)
 
-    # 6. Calcular confianza
+    # ═══════════════════════════════════════════════
+    # 6. Fusión: los datos SII tienen prioridad
+    # ═══════════════════════════════════════════════
+    for key, value in sii_data.items():
+        if value and not raw_data.get(key):
+            raw_data[key] = value
+
+    # 7. Calcular confianza inicial
     score = adapter.calculate_confidence(raw_data)
 
-    # 7. Si confianza baja o faltan críticos, enriquecer con IA
-    campos_criticos = ["numero_guia", "patente_camion"]
+    # 8. Enriquecer con IA si confianza baja o faltan campos críticos
+    campos_criticos = [
+        "numero_guia", "patente_camion",
+        "rut_emisor", "folio_sii",   # añadidos para el flujo SII
+    ]
     faltan_criticos = any(not raw_data.get(campo) for campo in campos_criticos)
 
     if (score < 70 or faltan_criticos) and not isinstance(adapter, GenericLLMAdapter):
@@ -216,7 +269,7 @@ async def extract_document(
             correction_history=correction_history,
         )
 
-        # Fusionar: los valores de la IA solo se usan si el adaptador específico no los tiene
+        # Fusionar IA solo donde el adaptador no tenga valor o el valor sea sospechoso
         for key, value in ai_data.items():
             valor_actual = raw_data.get(key)
             if not valor_actual or (
@@ -226,32 +279,51 @@ async def extract_document(
                     continue
                 raw_data[key] = value
 
-        # Re-validar después de la fusión
         raw_data = validate_extracted_data(raw_data)
-
         raw_data["adapter_used"] = f"{adapter.__class__.__name__} + GenericLLM"
         score = adapter.calculate_confidence(raw_data)
         raw_data["confidence_score"] = score
-        logger.info("Confianza después de enriquecimiento: %s", score)
     else:
         raw_data["confidence_score"] = score
         if "adapter_used" not in raw_data:
             raw_data["adapter_used"] = adapter.__class__.__name__
 
-    # ==========================================
-    # NUEVO: Extraer número de guía del nombre del archivo
-    # ==========================================
+    # ═══════════════════════════════════════════════
+    # 9. Extraer número de guía del nombre del archivo
+    # ═══════════════════════════════════════════════
     if not raw_data.get("numero_guia") and filename:
-        # Buscar GDE-YYYY-NNNNN o GDE YYYY NNNNN en el nombre del archivo
         match = re.search(r"GDE[- ]?(\d{4}[- ]?\d+)", filename, re.IGNORECASE)
         if match:
             raw_data["numero_guia"] = match.group(1).replace(" ", "").replace("-", "")
-            logger.info(f"Número de guía extraído del archivo: {raw_data['numero_guia']}")
-
-            # Recalcular confianza con el nuevo campo
+            logger.info("Número de guía extraído del archivo: %s", raw_data["numero_guia"])
             score = adapter.calculate_confidence(raw_data)
             raw_data["confidence_score"] = score
-            logger.info(f"📊 Confianza recalculada: {score}")
+
+    # ═══════════════════════════════════════════════
+    # 10. Generar Excel automáticamente (NUEVO)
+    # ═══════════════════════════════════════════════
+    try:
+        excel_bytes = generate_excel_report(
+            [raw_data],
+            output_path=f"procesados/excel/{filename}.xlsx",
+        )
+        logger.info("Excel generado (%d bytes) para %s", len(excel_bytes), filename)
+    except Exception:
+        logger.exception("Error generando Excel para %s", filename)
+
+    # ═══════════════════════════════════════════════
+    # 11. Mover archivo original a /procesados (NUEVO)
+    # ═══════════════════════════════════════════════
+    try:
+        file_manager = create_file_manager()
+        saved_path = file_manager.save_uploaded_file(file_bytes, filename)
+        processed_path = file_manager.move_to_processed(
+            saved_path,
+            subfolder=datetime.now().strftime("%Y/%m/%d"),
+        )
+        logger.info("Archivo original archivado en: %s", processed_path)
+    except Exception:
+        logger.exception("Error al archivar el documento %s", filename)
 
     logger.info(
         "Extracción finalizada. Adaptador: %s | Confianza: %s",

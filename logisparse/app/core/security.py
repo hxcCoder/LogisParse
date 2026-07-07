@@ -11,6 +11,7 @@ from typing import Any
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
+
 # Use Argon2 instead of bcrypt to avoid passlib/bcrypt compatibility issues
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 

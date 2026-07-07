@@ -20,6 +20,8 @@
 
 **LogisParse** es una plataforma SaaS que elimina el ingreso manual de datos en la logística. Extrae información clave desde guías de despacho, facturas y manifiestos mediante un motor híbrido (regex + IA), con validación semántica y un ciclo de aprendizaje continuo.
 
+**Nuevo:** Integración opcional con **AWS Textract** para escaneo de alta precisión, mapeo automático de campos tributarios chilenos (RUT, folio SII, monto total), exportación directa a **Excel** y archivo automático en bandeja de procesados.
+
 **Estado actual:** MVP funcional con adaptador para guías de despacho chilenas (formato SII), extracción de campos clave (origen, destino, patente, chofer, fecha, número de guía), sistema de confianza y corrección humana.
 
 ---
@@ -39,9 +41,11 @@
 
 - **Clasifica** el documento y usa un adaptador específico (ej. Starken) con regex afinados.
 - Si la confianza es baja, **fallback a IA** (OpenAI) para inferir datos faltantes.
-- **Valida** cada campo contra patrones (ciudades, patentes, fechas).
+- **Valida** cada campo contra patrones (ciudades, patentes, fechas, RUT).
 - Si la confianza < 80%, se deriva a **revisión humana** (`NEEDS_REVIEW`).
 - **Cada corrección humana** se guarda y se usa como ejemplo (few-shot) en futuras extracciones.
+- **Escaneo avanzado** con AWS Textract (opcional) para extraer tablas y formularios con precisión.
+- **Exportación instantánea** a Excel (.xlsx) y archivo automático del documento original en `/procesados`.
 
 ---
 
@@ -51,9 +55,10 @@
 | :--- | :--- | :--- |
 | **Tiempo** | Minutos | Segundos |
 | **Formatos** | Fijos | Flexibles (adaptadores + IA) |
-| **Precisión** | Baja | Alta + validación semántica |
+| **Precisión** | Baja | Alta + validación semántica + Textract |
 | **Aprendizaje** | No | Sí (continuo con correcciones) |
 | **Integración** | Manual | API REST JSON + Frontend Next.js |
+| **Salida de datos** | PDF/Imagen | JSON + Excel automático |
 
 ---
 
@@ -64,6 +69,8 @@
 - **Foco en pymes logísticas**: resuelve un dolor específico sin complejidad innecesaria.
 - **Mejora continua**: el sistema se vuelve más preciso con cada corrección humana.
 - **Frontend moderno**: construido con Next.js 14, TailwindCSS, diseño limpio (inspirado en Stripe/Linear).
+- **Listo para cumplimiento tributario**: captura automática de RUT emisor/receptor, folio electrónico SII y monto total.
+
 ---
 
 ## Innovación Técnica
@@ -75,16 +82,19 @@
 2.  **AI Structured Outputs + Few‑Shot**: la IA responde en JSON estricto (Pydantic) y usa correcciones previas como contexto en el prompt.
 3.  **Sistema de confianza y auditoría**: puntaje de confianza (0‑100) calculado según campos extraídos. Si `< 80`, el documento pasa a `NEEDS_REVIEW` para revisión manual.
 4.  **Trazabilidad completa**: cada documento tiene un ID único, estado, registro de errores y campo `extracted_data` con el JSON extraído.
-5.  **Aprendizaje continuo**: tabla `data_corrections` que registra cada corrección humana (campo, valor original, valor corregido, adaptador usado). 
-
-- Esta tabla se consulta para mejorar el prompt de la IA (few‑shot) y puede usarse en el futuro para reentrenar modelos o afinar regex.
-
-6.  **Frontend funcional** (Next.js 14 + TypeScript):
+5.  **Aprendizaje continuo**: tabla `data_corrections` que registra cada corrección humana (campo, valor original, valor corregido, adaptador usado).
+    *   Esta tabla se consulta para mejorar el prompt de la IA (few‑shot) y puede usarse en el futuro para reentrenar modelos o afinar regex.
+6.  **Integración con AWS Textract** *(nuevo)*: escaneo de alta precisión con extracción de tablas y formularios. Si no está configurado, el sistema usa OCR local automáticamente.
+7.  **Mapeo de datos SII** *(nuevo)*: extrae RUT emisor/receptor, folio electrónico SII, fecha de emisión y monto total desde el texto o desde las estructuras devueltas por Textract.
+8.  **Exportación a Excel** *(nuevo)*: genera un archivo `.xlsx` profesional con todos los campos extraídos, listo para compartir o integrar con otros sistemas.
+9.  **Bandeja limpia** *(nuevo)*: los archivos procesados se mueven automáticamente a `/procesados` organizados por fecha, conservando los originales para auditoría.
+10. **Frontend funcional** (Next.js 14 + TypeScript):
     *   Registro/Login con JWT
     *   Dashboard con tarjetas de documentos y paginación
     *   Subida con drag & drop y pipeline visual (Recibido → OCR → IA → Validado)
-    *   Detalle del documento con campos extraídos y formulario de corrección
+    *   Detalle del documento con campos extraídos (incluyendo datos fiscales) y formulario de corrección
     *   Responsive y diseño moderno (TailwindCSS)
+
 ---
 
 ## 🔄 Flujo Completo (Backend + Frontend)
@@ -92,20 +102,27 @@
 ```mermaid
 flowchart TD
     A[Usuario sube PDF/Imagen] --> B[Validación de archivo]
-    B --> C[Extracción de texto OCR/PDF]
-    C --> D[Clasificador: DocumentClassifier]
-    D --> E{Adaptador Específico?}
-    E -->|Sí| F[Adaptador Regex]
-    E -->|No| G[IA Genérica]
-    F --> H[Validación Semántica]
-    G --> H
-    H --> I[Cálculo de Confianza]
-    I --> J{Confianza ≥ 80?}
-    J -->|Sí| K[Estado EXTRACTED]
-    J -->|No| L[Estado NEEDS_REVIEW]
-    L --> M[Usuario corrige desde frontend]
-    M --> N[Guardar corrección en data_corrections]
-    N --> O[Reintentar extracción con contexto]
+    B --> C{AWS Textract configurado?}
+    C -->|Sí| D[Extracción con Textract: texto + tablas/forms]
+    C -->|No| E[OCR local: pdfplumber / pytesseract]
+    D --> F[Mapeo de campos SII: RUT, folio, monto, etc.]
+    E --> F
+    F --> G[Limpieza de texto + Clasificador: DocumentClassifier]
+    G --> H{Adaptador Específico?}
+    H -->|Sí| I[Adaptador Regex]
+    H -->|No| J[IA Genérica]
+    I --> K[Validación Semántica + fusión de datos SII]
+    J --> K
+    K --> L[Cálculo de Confianza]
+    L --> M{Confianza ≥ 80?}
+    M -->|Sí| N[Estado EXTRACTED]
+    M -->|No| O[Estado NEEDS_REVIEW]
+    O --> P[Usuario corrige desde frontend]
+    P --> Q[Guardar corrección en data_corrections]
+    Q --> R[Reintentar extracción con contexto]
+    N --> S[Generar Excel (.xlsx)]
+    S --> T[Mover archivo original a /procesados]
+    T --> U[Respuesta JSON + Excel disponible]
 ```
 ## 📁 Estructura del Proyecto
 ```plaintext
@@ -120,6 +137,10 @@ logisparse/
 │   ├── schemas/                 # Schemas Pydantic
 │   └── services/                # Lógica de negocio
 │       ├── document_extractor.py # Orquestador principal
+│       ├── aws_textract_service.py  # Integración AWS Textract (nuevo)
+│       ├── sii_mapper.py        # Mapeo de campos SII chilenos (nuevo)
+│       ├── excel_service.py     # Generación de Excel (nuevo)
+│       ├── file_manager.py      # Manejo de bandeja limpia (nuevo)
 │       └── extractors/           # Adaptadores de extracción
 │           ├── adapter_factory.py
 │           ├── base_adapter.py
@@ -136,7 +157,7 @@ logisparse/
 │       └── types/               # Tipos TypeScript
 ├── migrations/                  # Migraciones Alembic
 ├── tests/                       # Pruebas unitarias e integración
-├── .env.example                 # Variables de entorno
+├── .env.example                 # Variables de entorno (incluye AWS)
 ├── requirements.txt
 └── README.md
 ```

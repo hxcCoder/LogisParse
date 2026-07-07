@@ -1,0 +1,2261 @@
+<repository>
+
+<directory_tree>
+├── next-env.d.ts
+├── next.config.mjs
+├── package.json
+├── postcss.config.mjs
+├── README.md
+├── src
+│   ├── app
+│   │   ├── (auth)
+│   │   │   ├── layout.tsx
+│   │   │   ├── login
+│   │   │   │   └── page.tsx
+│   │   │   └── register
+│   │   │       └── page.tsx
+│   │   ├── (dashboard)
+│   │   │   ├── documents
+│   │   │   │   └── [id]
+│   │   │   │       └── page.tsx
+│   │   │   ├── layout.tsx
+│   │   │   ├── page.tsx
+│   │   │   └── upload
+│   │   │       └── page.tsx
+│   │   ├── globals.css
+│   │   ├── globals.d.ts
+│   │   ├── layout.tsx
+│   │   └── page.tsx
+│   ├── components
+│   │   ├── [id]
+│   │   │   └── page.tsx
+│   │   ├── common
+│   │   │   ├── LoadingSpinner.tsx
+│   │   │   ├── Navbar.tsx
+│   │   │   ├── ProtectedRoute.tsx
+│   │   │   └── StatusBadge.tsx
+│   │   ├── corrections
+│   │   │   └── CorrectionForm.tsx
+│   │   ├── documents
+│   │   │   └── DocumentCard.tsx
+│   │   └── upload
+│   │       ├── PipelineVisual.tsx
+│   │       └── UploadDropZone.tsx
+│   ├── context
+│   │   └── AuthContext.tsx
+│   ├── hooks
+│   │   └── useAuth.ts
+│   ├── lib
+│   │   └── api.ts
+│   ├── middleware.ts
+│   └── types
+│       └── index.ts
+├── tailwind.config.ts
+└── tsconfig.json
+</directory_tree>
+
+<file path="src/app/(auth)/layout.tsx">
+// src/app/(auth)/layout.tsx
+
+export default function AuthLayout({
+    children,
+}: {
+    children: React.ReactNode;
+}) {
+return (
+    &lt;div className=&quot;min-h-screen flex items-center justify-center bg-[#0F172A] p-4&quot;&gt;
+        &lt;div className=&quot;w-full max-w-md&quot;&gt;
+        {children}
+        &lt;/div&gt;
+    &lt;/div&gt;
+);
+}
+</file>
+
+<file path="src/app/(auth)/login/page.tsx">
+// src/app/(auth)/login/page.tsx
+
+&apos;use client&apos;;
+
+import { useState } from &apos;react&apos;;
+import Link from &apos;next/link&apos;;
+import { useRouter } from &apos;next/navigation&apos;;
+import { useAuth } from &apos;@/context/AuthContext&apos;;
+import { FaEnvelope, FaLock, FaSpinner } from &apos;react-icons/fa&apos;;
+import toast from &apos;react-hot-toast&apos;;
+
+export default function LoginPage() {
+  const router = useRouter();
+  const { login } = useAuth();
+  const [email, setEmail] = useState(&apos;&apos;);
+  const [password, setPassword] = useState(&apos;&apos;);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) =&gt; {
+    e.preventDefault();
+    
+    if (!email || !password) {
+      toast.error(&apos;Por favor, completa todos los campos&apos;);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await login({ email, password });
+      router.push(&apos;/&apos;);
+    } catch (error) {
+      console.error(&apos;Login error:&apos;, error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    &lt;div className=&quot;min-h-screen flex items-center justify-center bg-[#0F172A] p-4&quot;&gt;
+      &lt;div className=&quot;bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full&quot;&gt;
+        &lt;div className=&quot;text-center mb-8&quot;&gt;
+          &lt;h1 className=&quot;text-4xl font-bold text-[#0F172A] tracking-tight&quot;&gt;
+            &lt;span className=&quot;text-blue-600&quot;&gt;Logis&lt;/span&gt;Parse
+          &lt;/h1&gt;
+          &lt;p className=&quot;text-slate-500 mt-2 text-sm&quot;&gt;
+            Inicia sesión en tu cuenta
+          &lt;/p&gt;
+        &lt;/div&gt;
+
+        &lt;form onSubmit={handleSubmit} className=&quot;space-y-5&quot;&gt;
+          &lt;div&gt;
+            &lt;label htmlFor=&quot;email&quot; className=&quot;block text-sm font-medium text-slate-700 mb-1.5&quot;&gt;
+              Correo electrónico
+            &lt;/label&gt;
+            &lt;div className=&quot;relative&quot;&gt;
+              &lt;span className=&quot;absolute left-3 top-1/2 -translate-y-1/2 text-slate-400&quot;&gt;
+                &lt;FaEnvelope size={18} /&gt;
+              &lt;/span&gt;
+              &lt;input
+                id=&quot;email&quot;
+                type=&quot;email&quot;
+                value={email}
+                onChange={(e) =&gt; setEmail(e.target.value)}
+                placeholder=&quot;ejemplo@correo.cl&quot;
+                className=&quot;w-full pl-10 pr-4 py-3 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition&quot;
+                disabled={isLoading}
+                required
+              /&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+
+          &lt;div&gt;
+            &lt;label htmlFor=&quot;password&quot; className=&quot;block text-sm font-medium text-slate-700 mb-1.5&quot;&gt;
+              Contraseña
+            &lt;/label&gt;
+            &lt;div className=&quot;relative&quot;&gt;
+              &lt;span className=&quot;absolute left-3 top-1/2 -translate-y-1/2 text-slate-400&quot;&gt;
+                &lt;FaLock size={18} /&gt;
+              &lt;/span&gt;
+              &lt;input
+                id=&quot;password&quot;
+                type=&quot;password&quot;
+                value={password}
+                onChange={(e) =&gt; setPassword(e.target.value)}
+                placeholder=&quot;••••••••&quot;
+                className=&quot;w-full pl-10 pr-4 py-3 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition&quot;
+                disabled={isLoading}
+                required
+              /&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+
+          &lt;button
+            type=&quot;submit&quot;
+            disabled={isLoading}
+            className=&quot;w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors shadow-md disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2&quot;
+          &gt;
+            {isLoading ? (
+              &lt;&gt;
+                &lt;span className=&quot;flex items-center justify-center animate-spin&quot;&gt;
+                  &lt;FaSpinner size={18} /&gt;
+                &lt;/span&gt;
+                Iniciando sesión...
+              &lt;/&gt;
+            ) : (
+              &apos;Iniciar sesión&apos;
+            )}
+          &lt;/button&gt;
+        &lt;/form&gt;
+
+        &lt;div className=&quot;text-center mt-6 text-sm text-slate-600&quot;&gt;
+          ¿No tienes cuenta?{&apos; &apos;}
+          &lt;Link href=&quot;/register&quot; className=&quot;text-blue-600 hover:text-blue-700 font-medium&quot;&gt;
+            Regístrate aquí
+          &lt;/Link&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  );
+}
+</file>
+
+<file path="src/app/(auth)/register/page.tsx">
+// src/app/(auth)/register/page.tsx
+
+&apos;use client&apos;;
+
+import { useState } from &apos;react&apos;;
+import Link from &apos;next/link&apos;;
+import { useRouter } from &apos;next/navigation&apos;;
+import { useAuth } from &apos;@/context/AuthContext&apos;;
+import { FaEnvelope, FaLock, FaUser, FaSpinner } from &apos;react-icons/fa&apos;;
+import toast from &apos;react-hot-toast&apos;;
+
+export default function RegisterPage() {
+  const router = useRouter();
+  const { register } = useAuth();
+  const [email, setEmail] = useState(&apos;&apos;);
+  const [fullName, setFullName] = useState(&apos;&apos;);
+  const [password, setPassword] = useState(&apos;&apos;);
+  const [confirmPassword, setConfirmPassword] = useState(&apos;&apos;);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) =&gt; {
+    e.preventDefault();
+
+    if (!email || !password || !fullName) {
+      toast.error(&apos;Por favor, completa todos los campos&apos;);
+      return;
+    }
+
+    if (password.length &lt; 8) {
+      toast.error(&apos;La contraseña debe tener al menos 8 caracteres&apos;);
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      toast.error(&apos;Las contraseñas no coinciden&apos;);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await register({ email, password, full_name: fullName });
+      router.push(&apos;/login&apos;);
+    } catch (error) {
+      console.error(&apos;Register error:&apos;, error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    &lt;div className=&quot;min-h-screen flex items-center justify-center bg-[#0F172A] p-4&quot;&gt;
+      &lt;div className=&quot;bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full&quot;&gt;
+        &lt;div className=&quot;text-center mb-8&quot;&gt;
+          &lt;h1 className=&quot;text-4xl font-bold text-[#0F172A] tracking-tight&quot;&gt;
+            &lt;span className=&quot;text-blue-600&quot;&gt;Logis&lt;/span&gt;Parse
+          &lt;/h1&gt;
+          &lt;p className=&quot;text-slate-500 mt-2 text-sm&quot;&gt;
+            Crea tu cuenta gratuita
+          &lt;/p&gt;
+        &lt;/div&gt;
+
+        &lt;form onSubmit={handleSubmit} className=&quot;space-y-4&quot;&gt;
+          &lt;div&gt;
+            &lt;label htmlFor=&quot;fullName&quot; className=&quot;block text-sm font-medium text-slate-700 mb-1.5&quot;&gt;
+              Nombre completo
+            &lt;/label&gt;
+            &lt;div className=&quot;relative&quot;&gt;
+              &lt;span className=&quot;absolute left-3 top-1/2 -translate-y-1/2 text-slate-400&quot;&gt;
+                &lt;FaUser size={18} /&gt;
+              &lt;/span&gt;
+              &lt;input
+                id=&quot;fullName&quot;
+                type=&quot;text&quot;
+                value={fullName}
+                onChange={(e) =&gt; setFullName(e.target.value)}
+                placeholder=&quot;Juan Pérez&quot;
+                className=&quot;w-full pl-10 pr-4 py-3 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition&quot;
+                disabled={isLoading}
+                required
+              /&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+
+          &lt;div&gt;
+            &lt;label htmlFor=&quot;email&quot; className=&quot;block text-sm font-medium text-slate-700 mb-1.5&quot;&gt;
+              Correo electrónico
+            &lt;/label&gt;
+            &lt;div className=&quot;relative&quot;&gt;
+              &lt;span className=&quot;absolute left-3 top-1/2 -translate-y-1/2 text-slate-400&quot;&gt;
+                &lt;FaEnvelope size={18} /&gt;
+              &lt;/span&gt;
+              &lt;input
+                id=&quot;email&quot;
+                type=&quot;email&quot;
+                value={email}
+                onChange={(e) =&gt; setEmail(e.target.value)}
+                placeholder=&quot;ejemplo@correo.cl&quot;
+                className=&quot;w-full pl-10 pr-4 py-3 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition&quot;
+                disabled={isLoading}
+                required
+              /&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+
+          &lt;div&gt;
+            &lt;label htmlFor=&quot;password&quot; className=&quot;block text-sm font-medium text-slate-700 mb-1.5&quot;&gt;
+              Contraseña
+            &lt;/label&gt;
+            &lt;div className=&quot;relative&quot;&gt;
+              &lt;span className=&quot;absolute left-3 top-1/2 -translate-y-1/2 text-slate-400&quot;&gt;
+                &lt;FaLock size={18} /&gt;
+              &lt;/span&gt;
+              &lt;input
+                id=&quot;password&quot;
+                type=&quot;password&quot;
+                value={password}
+                onChange={(e) =&gt; setPassword(e.target.value)}
+                placeholder=&quot;Mínimo 8 caracteres&quot;
+                className=&quot;w-full pl-10 pr-4 py-3 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition&quot;
+                disabled={isLoading}
+                required
+                minLength={8}
+              /&gt;
+            &lt;/div&gt;
+            &lt;p className=&quot;text-xs text-slate-400 mt-1&quot;&gt;Mínimo 8 caracteres&lt;/p&gt;
+          &lt;/div&gt;
+
+          &lt;div&gt;
+            &lt;label htmlFor=&quot;confirmPassword&quot; className=&quot;block text-sm font-medium text-slate-700 mb-1.5&quot;&gt;
+              Confirmar contraseña
+            &lt;/label&gt;
+            &lt;div className=&quot;relative&quot;&gt;
+              &lt;span className=&quot;absolute left-3 top-1/2 -translate-y-1/2 text-slate-400&quot;&gt;
+                &lt;FaLock size={18} /&gt;
+              &lt;/span&gt;
+              &lt;input
+                id=&quot;confirmPassword&quot;
+                type=&quot;password&quot;
+                value={confirmPassword}
+                onChange={(e) =&gt; setConfirmPassword(e.target.value)}
+                placeholder=&quot;Repite tu contraseña&quot;
+                className=&quot;w-full pl-10 pr-4 py-3 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition&quot;
+                disabled={isLoading}
+                required
+              /&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+
+          &lt;button
+            type=&quot;submit&quot;
+            disabled={isLoading}
+            className=&quot;w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors shadow-md disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2&quot;
+          &gt;
+            {isLoading ? (
+              &lt;&gt;
+                &lt;span className=&quot;flex items-center justify-center animate-spin&quot;&gt;
+                  &lt;FaSpinner size={18} /&gt;
+                &lt;/span&gt;
+                Creando cuenta...
+              &lt;/&gt;
+            ) : (
+              &apos;Registrarse&apos;
+            )}
+          &lt;/button&gt;
+        &lt;/form&gt;
+
+        &lt;div className=&quot;text-center mt-6 text-sm text-slate-600&quot;&gt;
+          ¿Ya tienes cuenta?{&apos; &apos;}
+          &lt;Link href=&quot;/login&quot; className=&quot;text-blue-600 hover:text-blue-700 font-medium&quot;&gt;
+            Inicia sesión
+          &lt;/Link&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  );
+}
+</file>
+
+<file path="src/app/(dashboard)/documents/[id]/page.tsx">
+// src/app/(dashboard)/documents/[id]/page.tsx
+
+&apos;use client&apos;;
+
+import { useEffect, useState } from &apos;react&apos;;
+import { useParams, useRouter } from &apos;next/navigation&apos;;
+import Link from &apos;next/link&apos;;
+import { useAuth } from &apos;@/context/AuthContext&apos;;
+import { documentsApi } from &apos;@/lib/api&apos;;
+import { Document, CorrectionPayload, ExtractedLogisticsData } from &apos;@/types&apos;;
+import StatusBadge from &apos;@/components/common/StatusBadge&apos;;
+import LoadingSpinner from &apos;@/components/common/LoadingSpinner&apos;;
+import CorrectionForm from &apos;@/components/corrections/CorrectionForm&apos;;
+import { FaArrowLeft, FaCheckCircle, FaExclamationTriangle, FaInfoCircle } from &apos;react-icons/fa&apos;;
+import toast from &apos;react-hot-toast&apos;;
+
+// Lista fija de todos los campos que queremos mostrar (incluso vacíos)
+const ALL_FIELDS: (keyof ExtractedLogisticsData)[] = [
+  &apos;numero_guia&apos;,
+  &apos;chofer&apos;,
+  &apos;patente_camion&apos;,
+  &apos;origen&apos;,
+  &apos;destino&apos;,
+  &apos;fecha_despacho&apos;,
+  &apos;observaciones&apos;,
+];
+
+// --- FALLBACKS PARA EL VIDEO DE INACAP ---
+const DEMO_FALLBACKS: Record&lt;string, string&gt; = {
+  numero_guia: &apos;GDE-2026-00012345&apos;,
+  chofer: &apos;Juan Pérez González&apos;,
+  patente_camion: &apos;AB-CD-12&apos;,
+  origen: &apos;Bodega Central, Puerto Montt&apos;,
+  destino: &apos;Centro de Distribución El Roble, Santiago&apos;,
+  fecha_despacho: &apos;24-06-2026&apos;,
+  observaciones: &apos;Sin observaciones&apos;,
+};
+
+export default function DocumentDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const { token } = useAuth();
+  const documentId = params.id as string;
+
+  const [document, setDocument] = useState&lt;Document | null&gt;(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const loadDocument = async () =&gt; {
+    if (!token) return;
+    setIsLoading(true);
+    try {
+      const response = await documentsApi.get(documentId, token);
+      setDocument(response.data);
+    } catch (error: any) {
+      if (error.response?.status === 404) {
+        toast.error(&apos;Documento no encontrado&apos;);
+        router.push(&apos;/&apos;);
+      } else if (error.response?.status === 403) {
+        toast.error(&apos;No tienes permiso para ver este documento&apos;);
+        router.push(&apos;/&apos;);
+      } else {
+        toast.error(&apos;Error al cargar el documento&apos;);
+      }
+      console.error(error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() =&gt; {
+    loadDocument();
+  }, [documentId, token]);
+
+  const handleCorrectionSuccess = async () =&gt; {
+    setIsRefreshing(true);
+    await loadDocument();
+    setIsRefreshing(false);
+  };
+
+  const handleSubmitCorrection = async (
+    docId: string,
+    fieldName: string,
+    originalValue: string | null,
+    correctedValue: string,
+    adapterUsed: string | null
+  ) =&gt; {
+    const payload: CorrectionPayload = {
+      field_name: fieldName,
+      original_value: originalValue,
+      corrected_value: correctedValue,
+      adapter_used: adapterUsed,
+    };
+    await documentsApi.submitCorrection(docId, payload, token!);
+  };
+
+  if (isLoading) {
+    return (
+      &lt;div className=&quot;flex justify-center items-center min-h-[60vh]&quot;&gt;
+        &lt;LoadingSpinner size=&quot;lg&quot; /&gt;
+      &lt;/div&gt;
+    );
+  }
+
+  if (!document) {
+    return (
+      &lt;div className=&quot;text-center py-12&quot;&gt;
+        &lt;p className=&quot;text-slate-500&quot;&gt;Documento no encontrado&lt;/p&gt;
+        &lt;Link href=&quot;/&quot; className=&quot;text-blue-600 hover:underline mt-2 inline-block&quot;&gt;
+          Volver al dashboard
+        &lt;/Link&gt;
+      &lt;/div&gt;
+    );
+  }
+
+  const data = document.extracted_data;
+  const isNeedsReview = document.status === &apos;NEEDS_REVIEW&apos;;
+  const isExtracted = document.status === &apos;EXTRACTED&apos;;
+  const isFailed = document.status === &apos;FAILED&apos;;
+
+  return (
+    &lt;div className=&quot;max-w-4xl mx-auto&quot;&gt;
+      {/* Header */}
+      &lt;div className=&quot;flex items-center gap-4 mb-6&quot;&gt;
+        &lt;Link
+          href=&quot;/&quot;
+          className=&quot;text-slate-500 hover:text-slate-700 transition-colors&quot;
+        &gt;
+          &lt;span&gt;
+            &lt;FaArrowLeft size={20} /&gt;
+          &lt;/span&gt;
+        &lt;/Link&gt;
+        &lt;div className=&quot;flex-1&quot;&gt;
+          &lt;h1 className=&quot;text-2xl font-bold text-[#0F172A] truncate&quot;&gt;
+            {document.filename}
+          &lt;/h1&gt;
+          &lt;div className=&quot;flex items-center gap-3 mt-1 flex-wrap&quot;&gt;
+            &lt;StatusBadge status={document.status} /&gt;
+            {data?.confidence_score !== undefined &amp;&amp; data?.confidence_score !== null &amp;&amp; (
+              &lt;span
+                className={`text-sm font-medium ${
+                  data.confidence_score &gt;= 80
+                    ? &apos;text-green-600&apos;
+                    : data.confidence_score &gt;= 50
+                    ? &apos;text-yellow-600&apos;
+                    : &apos;text-red-600&apos;
+                }`}
+              &gt;
+                Confianza: {Math.round(data.confidence_score)}%
+              &lt;/span&gt;
+            )}
+            {data?.adapter_used &amp;&amp; (
+              &lt;span className=&quot;text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded-full&quot;&gt;
+                {data.adapter_used}
+              &lt;/span&gt;
+            )}
+          &lt;/div&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+
+      {/* Contenido principal */}
+      &lt;div className=&quot;grid md:grid-cols-3 gap-6&quot;&gt;
+        {/* Datos extraídos */}
+        &lt;div className=&quot;md:col-span-2&quot;&gt;
+          &lt;div className=&quot;bg-white rounded-xl border border-slate-200 p-6&quot;&gt;
+            &lt;h2 className=&quot;text-lg font-semibold text-[#0F172A] mb-4&quot;&gt;
+              📋 Datos extraídos
+            &lt;/h2&gt;
+
+            {isFailed ? (
+              &lt;div className=&quot;bg-red-50 border border-red-200 rounded-lg p-4 text-red-700&quot;&gt;
+                &lt;p className=&quot;font-medium&quot;&gt;Error en el procesamiento&lt;/p&gt;
+                &lt;p className=&quot;text-sm mt-1&quot;&gt;{document.error_logs || &apos;Error desconocido&apos;}&lt;/p&gt;
+              &lt;/div&gt;
+            ) : data ? (
+              &lt;div className=&quot;grid grid-cols-1 sm:grid-cols-2 gap-4&quot;&gt;
+                {ALL_FIELDS.map((key) =&gt; {
+                  const realValue = data[key];
+                  
+                  // MAGIA DEL VIDEO: Si no hay valor real en BD, inyectamos el de prueba
+                  const valueToDisplay =
+                    realValue !== null &amp;&amp; realValue !== undefined &amp;&amp; realValue !== &apos;&apos;
+                      ? String(realValue)
+                      : DEMO_FALLBACKS[key];
+
+                  // Formatear la etiqueta para que no se vea &quot;patente_camion&quot; sino &quot;Patente Camion&quot;
+                  const prettyLabel = key.replace(/_/g, &apos; &apos;);
+
+                  return (
+                    &lt;div key={key} className=&quot;border-b border-slate-100 pb-2&quot;&gt;
+                      &lt;p className=&quot;text-xs text-slate-400 uppercase tracking-wider font-semibold&quot;&gt;
+                        {prettyLabel}
+                      &lt;/p&gt;
+                      &lt;p className=&quot;text-sm font-medium text-[#0F172A] mt-0.5&quot;&gt;
+                        {valueToDisplay}
+                      &lt;/p&gt;
+                    &lt;/div&gt;
+                  );
+                })}
+              &lt;/div&gt;
+            ) : (
+              &lt;p className=&quot;text-slate-500 text-sm&quot;&gt;No se extrajeron datos&lt;/p&gt;
+            )}
+          &lt;/div&gt;
+        &lt;/div&gt;
+
+        {/* Sidebar: Estado del pipeline + acciones */}
+        &lt;div className=&quot;md:col-span-1 space-y-4&quot;&gt;
+          {/* Estado del documento */}
+          &lt;div className=&quot;bg-white rounded-xl border border-slate-200 p-6&quot;&gt;
+            &lt;h3 className=&quot;text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3&quot;&gt;
+              Estado
+            &lt;/h3&gt;
+            &lt;div className=&quot;flex items-center gap-2&quot;&gt;
+              {isExtracted &amp;&amp; (
+                &lt;&gt;
+                  &lt;span className=&quot;text-green-500&quot;&gt;
+                    &lt;FaCheckCircle size={20} /&gt;
+                  &lt;/span&gt;
+                  &lt;span className=&quot;text-green-700 font-medium&quot;&gt;Documento validado&lt;/span&gt;
+                &lt;/&gt;
+              )}
+              {isNeedsReview &amp;&amp; (
+                &lt;&gt;
+                  &lt;span className=&quot;text-orange-500&quot;&gt;
+                    &lt;FaExclamationTriangle size={20} /&gt;
+                  &lt;/span&gt;
+                  &lt;span className=&quot;text-orange-700 font-medium&quot;&gt;Requiere revisión&lt;/span&gt;
+                &lt;/&gt;
+              )}
+              {isFailed &amp;&amp; (
+                &lt;&gt;
+                  &lt;span className=&quot;text-red-500&quot;&gt;
+                    &lt;FaInfoCircle size={20} /&gt;
+                  &lt;/span&gt;
+                  &lt;span className=&quot;text-red-700 font-medium&quot;&gt;Error en el proceso&lt;/span&gt;
+                &lt;/&gt;
+              )}
+            &lt;/div&gt;
+            {isNeedsReview &amp;&amp; (
+              &lt;p className=&quot;text-xs text-slate-500 mt-2&quot;&gt;
+                El sistema no está seguro de estos datos. Revisa y corrige los campos necesarios.
+              &lt;/p&gt;
+            )}
+          &lt;/div&gt;
+
+          {/* Acciones rápidas */}
+          &lt;div className=&quot;bg-white rounded-xl border border-slate-200 p-6&quot;&gt;
+            &lt;h3 className=&quot;text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3&quot;&gt;
+              Acciones
+            &lt;/h3&gt;
+            &lt;button
+              onClick={() =&gt; loadDocument()}
+              disabled={isRefreshing}
+              className=&quot;w-full text-center text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors disabled:opacity-50&quot;
+            &gt;
+              {isRefreshing ? &apos;Actualizando...&apos; : &apos;🔄 Actualizar&apos;}
+            &lt;/button&gt;
+          &lt;/div&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+
+      {/* Formulario de corrección (solo si NEEDS_REVIEW) */}
+      {isNeedsReview &amp;&amp; data &amp;&amp; (
+        &lt;div className=&quot;mt-6&quot;&gt;
+          &lt;CorrectionForm
+            documentId={document.id}
+            extractedData={data}
+            onCorrectionSuccess={handleCorrectionSuccess}
+            onSubmit={handleSubmitCorrection}
+          /&gt;
+        &lt;/div&gt;
+      )}
+    &lt;/div&gt;
+  );
+}
+</file>
+
+<file path="src/app/(dashboard)/layout.tsx">
+// src/app/(dashboard)/layout.tsx
+
+&apos;use client&apos;;
+
+import ProtectedRoute from &apos;@/components/common/ProtectedRoute&apos;;
+import Navbar from &apos;@/components/common/Navbar&apos;;
+
+export default function DashboardLayout({
+    children,
+}: {
+    children: React.ReactNode;
+}) {
+return (
+    &lt;ProtectedRoute&gt;
+        &lt;Navbar /&gt;
+        &lt;main className=&quot;min-h-screen bg-[#F8FAFC] py-8 px-4 sm:px-6 lg:px-8&quot;&gt;
+        &lt;div className=&quot;max-w-7xl mx-auto&quot;&gt;{children}&lt;/div&gt;
+        &lt;/main&gt;
+    &lt;/ProtectedRoute&gt;
+);
+}
+</file>
+
+<file path="src/app/(dashboard)/page.tsx">
+// src/app/(dashboard)/page.tsx
+
+&apos;use client&apos;;
+
+import { useEffect, useState } from &apos;react&apos;;
+import Link from &apos;next/link&apos;;
+import { useAuth } from &apos;@/context/AuthContext&apos;;
+import { documentsApi } from &apos;@/lib/api&apos;;
+import { Document } from &apos;@/types&apos;;
+import DocumentCard from &apos;@/components/documents/DocumentCard&apos;;
+import LoadingSpinner from &apos;@/components/common/LoadingSpinner&apos;;
+import { FaPlus, FaFileAlt } from &apos;react-icons/fa&apos;;
+import toast from &apos;react-hot-toast&apos;;
+
+export default function DashboardPage() {
+  const { user, token } = useAuth();
+  const [documents, setDocuments] = useState&lt;Document[]&gt;([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [skip, setSkip] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const limit = 10;
+
+  const loadDocuments = async (currentSkip: number) =&gt; {
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const response = await documentsApi.list(token, currentSkip, limit);
+      const data = response.data;
+      if (currentSkip === 0) {
+        setDocuments(data);
+      } else {
+        setDocuments((prev) =&gt; [...prev, ...data]);
+      }
+      setHasMore(data.length === limit);
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        toast.error(&apos;Sesión expirada. Inicia sesión nuevamente.&apos;);
+        // El interceptor ya maneja el logout automático
+      } else {
+        toast.error(&apos;Error al cargar los documentos&apos;);
+      }
+      console.error(error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() =&gt; {
+    loadDocuments(0);
+  }, [token]);
+
+  const loadMore = () =&gt; {
+    if (!isLoading &amp;&amp; hasMore) {
+      const newSkip = skip + limit;
+      setSkip(newSkip);
+      loadDocuments(newSkip);
+    }
+  };
+
+  if (isLoading &amp;&amp; documents.length === 0) {
+    return (
+      &lt;div className=&quot;flex justify-center items-center min-h-[60vh]&quot;&gt;
+        &lt;LoadingSpinner size=&quot;lg&quot; /&gt;
+      &lt;/div&gt;
+    );
+  }
+
+  return (
+    &lt;div&gt;
+      {/* Header */}
+      &lt;div className=&quot;flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8&quot;&gt;
+        &lt;div&gt;
+          &lt;h1 className=&quot;text-3xl font-bold text-[#0F172A]&quot;&gt;Dashboard&lt;/h1&gt;
+          &lt;p className=&quot;text-slate-500 mt-1&quot;&gt;
+            Bienvenido, {user?.full_name || user?.email || &apos;Usuario&apos;}
+          &lt;/p&gt;
+        &lt;/div&gt;
+        &lt;Link
+          href=&quot;/upload&quot;
+          className=&quot;flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 px-5 rounded-lg transition-colors shadow-md flex-shrink-0&quot;
+        &gt;
+          &lt;span className=&quot;flex items-center justify-center&quot;&gt;
+            &lt;FaPlus size={16} /&gt;
+          &lt;/span&gt;
+          Nuevo documento
+        &lt;/Link&gt;
+      &lt;/div&gt;
+
+      {/* Lista de documentos */}
+      {documents.length === 0 ? (
+        &lt;div className=&quot;bg-white rounded-xl shadow-sm p-12 text-center border border-slate-200&quot;&gt;
+          &lt;div className=&quot;flex justify-center mb-4&quot;&gt;
+            &lt;div className=&quot;bg-blue-50 p-4 rounded-full&quot;&gt;
+              &lt;FaFileAlt size={32} color=&quot;#2563eb&quot; /&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+          &lt;h2 className=&quot;text-xl font-semibold text-[#0F172A]&quot;&gt;Aún no hay documentos&lt;/h2&gt;
+          &lt;p className=&quot;text-slate-500 mt-2 max-w-sm mx-auto&quot;&gt;
+            Sube tu primer documento para comenzar a extraer información automáticamente
+          &lt;/p&gt;
+          &lt;Link
+            href=&quot;/upload&quot;
+            className=&quot;inline-flex items-center gap-2 mt-6 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 px-6 rounded-lg transition-colors shadow-md&quot;
+          &gt;
+            &lt;span className=&quot;flex items-center justify-center&quot;&gt;
+              &lt;FaPlus size={16} /&gt;
+            &lt;/span&gt;
+            Subir primer documento
+          &lt;/Link&gt;
+        &lt;/div&gt;
+      ) : (
+        &lt;div className=&quot;space-y-4&quot;&gt;
+          {documents.map((doc) =&gt; (
+            &lt;DocumentCard key={doc.id} document={doc} /&gt;
+          ))}
+
+          {/* Cargar más */}
+          {hasMore &amp;&amp; (
+            &lt;div className=&quot;flex justify-center pt-4&quot;&gt;
+              &lt;button
+                onClick={loadMore}
+                disabled={isLoading}
+                className=&quot;px-6 py-2.5 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg text-sm font-medium text-slate-700 transition-colors disabled:opacity-50&quot;
+              &gt;
+                {isLoading ? &apos;Cargando...&apos; : &apos;Cargar más documentos&apos;}
+              &lt;/button&gt;
+            &lt;/div&gt;
+          )}
+        &lt;/div&gt;
+      )}
+    &lt;/div&gt;
+  );
+}
+</file>
+
+<file path="src/app/(dashboard)/upload/page.tsx">
+// src/app/(dashboard)/upload/page.tsx
+&apos;use client&apos;;
+
+import { useState } from &apos;react&apos;;
+import { useRouter } from &apos;next/navigation&apos;;
+import { useAuth } from &apos;@/context/AuthContext&apos;;
+import { documentsApi } from &apos;@/lib/api&apos;;
+import UploadDropzone from &apos;@/components/upload/UploadDropZone&apos;; // Ojo con la Z mayúscula si tu archivo es así
+import PipelineVisual, { Step } from &apos;@/components/upload/PipelineVisual&apos;;
+import LoadingSpinner from &apos;@/components/common/LoadingSpinner&apos;;
+import { FaArrowLeft } from &apos;react-icons/fa&apos;;
+import Link from &apos;next/link&apos;;
+import toast from &apos;react-hot-toast&apos;;
+
+export default function UploadPage() {
+  const router = useRouter();
+  const { token } = useAuth();
+  const [file, setFile] = useState&lt;File | null&gt;(null);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  const initialSteps: Step[] = [
+    { id: &apos;1&apos;, label: &apos;Recibiendo documento&apos;, status: &apos;idle&apos; },
+    { id: &apos;2&apos;, label: &apos;Extrayendo texto (OCR)&apos;, status: &apos;idle&apos; },
+    { id: &apos;3&apos;, label: &apos;Analizando con IA&apos;, status: &apos;idle&apos; },
+    { id: &apos;4&apos;, label: &apos;Validando datos&apos;, status: &apos;idle&apos; },
+  ];
+  
+  const [steps, setSteps] = useState&lt;Step[]&gt;(initialSteps);
+
+  const updateStep = (index: number, status: Step[&apos;status&apos;]) =&gt; {
+    setSteps((prev) =&gt; prev.map((s, i) =&gt; (i === index ? { ...s, status } : s)));
+  };
+
+  // Función auxiliar para pausas visuales
+  const sleep = (ms: number) =&gt; new Promise((resolve) =&gt; setTimeout(resolve, ms));
+
+  const handleUpload = async () =&gt; {
+    if (!file || !token) {
+      toast.error(&apos;Selecciona un archivo primero&apos;);
+      return;
+    }
+
+    setIsLoading(true);
+    setSteps(initialSteps);
+
+    try {
+      // 1. Recibiendo documento
+      updateStep(0, &apos;processing&apos;);
+      await sleep(600); // Pequeña pausa visual
+      
+      // Iniciamos la subida REAL al backend
+      const uploadPromise = documentsApi.upload(file, token);
+      updateStep(0, &apos;done&apos;);
+
+      // 2. Extrayendo texto (OCR visual)
+      updateStep(1, &apos;processing&apos;);
+      await sleep(1000);
+      updateStep(1, &apos;done&apos;);
+
+      // 3. Analizando con IA (Esperamos a que el backend termine realmente aquí)
+      updateStep(2, &apos;processing&apos;);
+      const response = await uploadPromise; // Aquí se resuelve la petición real
+      updateStep(2, &apos;done&apos;);
+
+      // 4. Validando datos
+      updateStep(3, &apos;processing&apos;);
+      await sleep(600);
+      updateStep(3, &apos;done&apos;);
+
+      // Éxito real
+      const documentId = response.data.id;
+      toast.success(&apos;Documento procesado exitosamente 🎉&apos;);
+      
+      // Esperamos medio segundo para que el usuario vea todos los ticks verdes
+      await sleep(500); 
+      router.push(`/documents/${documentId}`);
+
+    } catch (error: any) {
+      console.error(error);
+      // Encontrar el paso que estaba en &apos;processing&apos; y ponerlo en &apos;error&apos;
+      setSteps((prev) =&gt;
+        prev.map((s) =&gt; (s.status === &apos;processing&apos; ? { ...s, status: &apos;error&apos; } : s))
+      );
+      const message = error.response?.data?.detail || &apos;Error al subir el documento&apos;;
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    &lt;div className=&quot;max-w-4xl mx-auto&quot;&gt;
+      {/* Header */}
+      &lt;div className=&quot;flex items-center gap-4 mb-6&quot;&gt;
+        &lt;Link href=&quot;/&quot; className=&quot;text-slate-500 hover:text-slate-700 transition-colors&quot;&gt;
+          &lt;FaArrowLeft size={20} /&gt;
+        &lt;/Link&gt;
+        &lt;div&gt;
+          &lt;h1 className=&quot;text-2xl font-bold text-[#0F172A]&quot;&gt;Subir documento&lt;/h1&gt;
+          &lt;p className=&quot;text-slate-500 text-sm&quot;&gt;
+            Arrastra tu archivo o haz clic para seleccionarlo
+          &lt;/p&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+
+      {/* Contenido */}
+      &lt;div className=&quot;grid md:grid-cols-3 gap-6&quot;&gt;
+        &lt;div className=&quot;md:col-span-2&quot;&gt;
+          &lt;UploadDropzone
+            onFileSelect={setFile}
+            selectedFile={file}
+            isLoading={isLoading}
+          /&gt;
+
+          {file &amp;&amp; (
+            &lt;div className=&quot;mt-4 flex justify-end&quot;&gt;
+              &lt;button
+                onClick={handleUpload}
+                disabled={isLoading}
+                className=&quot;bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-8 rounded-lg transition-colors shadow-md disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2&quot;
+              &gt;
+                {isLoading ? (
+                  &lt;&gt;
+                    &lt;LoadingSpinner size=&quot;sm&quot; /&gt;
+                    Procesando...
+                  &lt;/&gt;
+                ) : (
+                  &apos;Subir documento&apos;
+                )}
+              &lt;/button&gt;
+            &lt;/div&gt;
+          )}
+        &lt;/div&gt;
+
+        &lt;div className=&quot;md:col-span-1&quot;&gt;
+          &lt;PipelineVisual steps={steps} /&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  );
+}
+</file>
+
+<file path="src/app/layout.tsx">
+// src/app/layout.tsx
+
+import type { Metadata } from &apos;next&apos;;
+import { Inter } from &apos;next/font/google&apos;;
+import &apos;./globals.css&apos;;
+import { AuthProvider } from &apos;@/context/AuthContext&apos;;
+import { Toaster } from &apos;react-hot-toast&apos;;
+
+const inter = Inter({ subsets: [&apos;latin&apos;] });
+
+export const metadata: Metadata = {
+  title: &apos;LogisParse&apos;,
+  description: &apos;Inteligencia documental para la logística chilena&apos;,
+};
+
+export default function RootLayout({
+  children,
+}: Readonly&lt;{
+  children: React.ReactNode;
+}&gt;) {
+  return (
+    &lt;html lang=&quot;es&quot;&gt;
+      &lt;body className={`${inter.className} antialiased`}&gt;
+        &lt;AuthProvider&gt;
+          {children}
+          &lt;Toaster
+            position=&quot;top-right&quot;
+            toastOptions={{
+              duration: 4000,
+              style: {
+                background: &apos;#0F172A&apos;,
+                color: &apos;#F8FAFC&apos;,
+                borderRadius: &apos;8px&apos;,
+              },
+            }}
+          /&gt;
+        &lt;/AuthProvider&gt;
+      &lt;/body&gt;
+    &lt;/html&gt;
+  );
+}
+</file>
+
+<file path="src/app/page.tsx">
+/// src/app/page.tsx
+
+&apos;use client&apos;;
+
+import { useEffect, useState } from &apos;react&apos;;
+import Link from &apos;next/link&apos;;
+import { useAuth } from &apos;@/context/AuthContext&apos;;
+import { documentsApi } from &apos;@/lib/api&apos;;
+import { Document } from &apos;@/types&apos;;
+import DocumentCard from &apos;@/components/documents/DocumentCard&apos;;
+import LoadingSpinner from &apos;@/components/common/LoadingSpinner&apos;;
+import ProtectedRoute from &apos;@/components/common/ProtectedRoute&apos;;
+import Navbar from &apos;@/components/common/Navbar&apos;;
+import { FaPlus, FaFileAlt } from &apos;react-icons/fa&apos;;
+import toast from &apos;react-hot-toast&apos;;
+
+function DashboardContent() {
+  const { user, token } = useAuth();
+  const [documents, setDocuments] = useState&lt;Document[]&gt;([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [skip, setSkip] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const limit = 10;
+
+  const loadDocuments = async (currentSkip: number) =&gt; {
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const response = await documentsApi.list(token, currentSkip, limit);
+      const data = response.data;
+      if (currentSkip === 0) {
+        setDocuments(data);
+      } else {
+        setDocuments((prev) =&gt; [...prev, ...data]);
+      }
+      setHasMore(data.length === limit);
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        toast.error(&apos;Sesión expirada. Inicia sesión nuevamente.&apos;);
+      } else {
+        toast.error(&apos;Error al cargar los documentos&apos;);
+      }
+      console.error(error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() =&gt; {
+    loadDocuments(0);
+  }, [token]);
+
+  const loadMore = () =&gt; {
+    if (!isLoading &amp;&amp; hasMore) {
+      const newSkip = skip + limit;
+      setSkip(newSkip);
+      loadDocuments(newSkip);
+    }
+  };
+
+  if (isLoading &amp;&amp; documents.length === 0) {
+    return (
+      &lt;div className=&quot;flex justify-center items-center min-h-[60vh]&quot;&gt;
+        &lt;LoadingSpinner size=&quot;lg&quot; /&gt;
+      &lt;/div&gt;
+    );
+  }
+
+  return (
+    &lt;div&gt;
+      &lt;div className=&quot;flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8&quot;&gt;
+        &lt;div&gt;
+          &lt;h1 className=&quot;text-3xl font-bold text-[#0F172A]&quot;&gt;Dashboard&lt;/h1&gt;
+          &lt;p className=&quot;text-slate-500 mt-1&quot;&gt;
+            Bienvenido, {user?.full_name || user?.email || &apos;Usuario&apos;}
+          &lt;/p&gt;
+        &lt;/div&gt;
+        &lt;Link
+          href=&quot;/upload&quot;
+          className=&quot;flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 px-5 rounded-lg transition-colors shadow-md flex-shrink-0&quot;
+        &gt;
+          &lt;span className=&quot;flex items-center justify-center&quot;&gt;
+            &lt;FaPlus size={16} /&gt;
+          &lt;/span&gt;
+          Nuevo documento
+        &lt;/Link&gt;
+      &lt;/div&gt;
+
+      {documents.length === 0 ? (
+        &lt;div className=&quot;bg-white rounded-xl shadow-sm p-12 text-center border border-slate-200&quot;&gt;
+          &lt;div className=&quot;flex justify-center mb-4&quot;&gt;
+            &lt;div className=&quot;bg-blue-50 p-4 rounded-full&quot;&gt;
+              &lt;FaFileAlt size={32} color=&quot;#2563EB&quot; /&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+          &lt;h2 className=&quot;text-xl font-semibold text-[#0F172A]&quot;&gt;Aún no hay documentos&lt;/h2&gt;
+          &lt;p className=&quot;text-slate-500 mt-2 max-w-sm mx-auto&quot;&gt;
+            Sube tu primer documento para comenzar a extraer información automáticamente
+          &lt;/p&gt;
+          &lt;Link
+            href=&quot;/upload&quot;
+            className=&quot;inline-flex items-center gap-2 mt-6 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 px-6 rounded-lg transition-colors shadow-md&quot;
+          &gt;
+            &lt;span className=&quot;flex items-center justify-center&quot;&gt;
+              &lt;FaPlus size={16} /&gt;
+            &lt;/span&gt;
+            Subir primer documento
+          &lt;/Link&gt;
+        &lt;/div&gt;
+      ) : (
+        &lt;div className=&quot;space-y-4&quot;&gt;
+          {documents.map((doc) =&gt; (
+            &lt;DocumentCard key={doc.id} document={doc} /&gt;
+          ))}
+          {hasMore &amp;&amp; (
+            &lt;div className=&quot;flex justify-center pt-4&quot;&gt;
+              &lt;button
+                onClick={loadMore}
+                disabled={isLoading}
+                className=&quot;px-6 py-2.5 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg text-sm font-medium text-slate-700 transition-colors disabled:opacity-50&quot;
+              &gt;
+                {isLoading ? &apos;Cargando...&apos; : &apos;Cargar más documentos&apos;}
+              &lt;/button&gt;
+            &lt;/div&gt;
+          )}
+        &lt;/div&gt;
+      )}
+    &lt;/div&gt;
+  );
+}
+
+export default function Home() {
+  return (
+    &lt;ProtectedRoute&gt;
+      &lt;Navbar /&gt;
+      &lt;main className=&quot;min-h-screen bg-[#F8FAFC] py-8 px-4 sm:px-6 lg:px-8&quot;&gt;
+        &lt;div className=&quot;max-w-7xl mx-auto&quot;&gt;
+          &lt;DashboardContent /&gt;
+        &lt;/div&gt;
+      &lt;/main&gt;
+    &lt;/ProtectedRoute&gt;
+  );
+}
+</file>
+
+<file path="src/components/common/LoadingSpinner.tsx">
+// src/components/common/LoadingSpinner.tsx
+
+&apos;use client&apos;;
+
+interface LoadingSpinnerProps {
+    size?: &apos;sm&apos; | &apos;md&apos; | &apos;lg&apos;;
+    className?: string;
+}
+
+const sizeClasses = {
+    sm: &apos;w-5 h-5 border-2&apos;,
+    md: &apos;w-8 h-8 border-3&apos;,
+    lg: &apos;w-12 h-12 border-4&apos;,
+};
+
+export default function LoadingSpinner({ size = &apos;md&apos;, className = &apos;&apos; }: LoadingSpinnerProps) {
+    return (
+        &lt;div
+            className={`inline-block animate-spin rounded-full border-solid border-blue-600 border-t-transparent ${sizeClasses[size]} ${className}`}
+            role=&quot;status&quot;
+            aria-label=&quot;Cargando...&quot;
+    /&gt;
+);
+}
+</file>
+
+<file path="src/components/common/Navbar.tsx">
+// src/components/common/Navbar.tsx
+
+&apos;use client&apos;;
+
+import Link from &apos;next/link&apos;;
+import { usePathname } from &apos;next/navigation&apos;;
+import { useAuth } from &apos;@/context/AuthContext&apos;;
+import { FaFileAlt, FaUpload, FaSignOutAlt, FaUser } from &apos;react-icons/fa&apos;;
+
+export default function Navbar() {
+const pathname = usePathname();
+const { user, logout } = useAuth();
+
+const isActive = (path: string) =&gt; pathname === path;
+
+return (
+    &lt;nav className=&quot;bg-[#0F172A] text-white shadow-lg sticky top-0 z-50&quot;&gt;
+        &lt;div className=&quot;max-w-7xl mx-auto px-4 sm:px-6 lg:px-8&quot;&gt;
+        &lt;div className=&quot;flex justify-between items-center h-16&quot;&gt;
+          {/* Logo */}
+        &lt;Link href=&quot;/&quot; className=&quot;flex items-center gap-2 text-xl font-bold tracking-tight&quot;&gt;
+            &lt;span className=&quot;text-blue-400&quot;&gt;Logis&lt;/span&gt;
+            &lt;span&gt;Parse&lt;/span&gt;
+        &lt;/Link&gt;
+
+          {/* Enlaces centrales */}
+        &lt;div className=&quot;hidden md:flex items-center gap-6&quot;&gt;
+            &lt;Link
+                href=&quot;/&quot;
+                className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                isActive(&apos;/&apos;) ? &apos;bg-blue-600 text-white&apos; : &apos;text-slate-300 hover:bg-slate-800 hover:text-white&apos;
+            }`}
+            &gt;
+                &lt;span className=&quot;flex items-center justify-center&quot;&gt;
+                &lt;FaFileAlt size={16} /&gt;
+                &lt;/span&gt;
+                Dashboard
+            &lt;/Link&gt;
+            &lt;Link
+                href=&quot;/upload&quot;
+                className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                isActive(&apos;/upload&apos;) ? &apos;bg-blue-600 text-white&apos; : &apos;text-slate-300 hover:bg-slate-800 hover:text-white&apos;
+            }`}
+            &gt;
+                &lt;span className=&quot;flex items-center justify-center&quot;&gt;
+                &lt;FaUpload size={16} /&gt;
+                &lt;/span&gt;
+                Subir
+            &lt;/Link&gt;
+            &lt;/div&gt;
+
+          {/* Perfil + Logout */}
+        &lt;div className=&quot;flex items-center gap-4&quot;&gt;
+            &lt;span className=&quot;hidden sm:inline text-sm text-slate-300&quot;&gt;
+                &lt;span className=&quot;inline-flex items-center gap-1.5&quot;&gt;
+                &lt;FaUser size={14} /&gt;
+                {user?.full_name || user?.email || &apos;Usuario&apos;}
+                &lt;/span&gt;
+            &lt;/span&gt;
+            &lt;button
+                onClick={logout}
+                className=&quot;flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-red-600 hover:bg-red-700 transition-colors&quot;
+            &gt;
+                &lt;span className=&quot;flex items-center justify-center&quot;&gt;
+                &lt;FaSignOutAlt size={16} /&gt;
+                &lt;/span&gt;
+                &lt;span className=&quot;hidden sm:inline&quot;&gt;Cerrar sesión&lt;/span&gt;
+            &lt;/button&gt;
+            &lt;/div&gt;
+        &lt;/div&gt;
+        &lt;/div&gt;
+    &lt;/nav&gt;
+);
+}
+</file>
+
+<file path="src/components/common/ProtectedRoute.tsx">
+// src/components/common/ProtectedRoute.tsx
+
+&apos;use client&apos;;
+
+import { useEffect } from &apos;react&apos;;
+import { useRouter } from &apos;next/navigation&apos;;
+import { useAuth } from &apos;@/context/AuthContext&apos;;
+import LoadingSpinner from &apos;./LoadingSpinner&apos;;
+
+interface ProtectedRouteProps {
+    children: React.ReactNode;
+}
+
+export default function ProtectedRoute({ children }: ProtectedRouteProps) {
+    const { token, isLoading } = useAuth();
+    const router = useRouter();
+
+useEffect(() =&gt; {
+    if (!isLoading &amp;&amp; !token) {
+        router.push(&apos;/login&apos;);
+    }
+}, [token, isLoading, router]);
+
+if (isLoading) {
+    return (
+        &lt;div className=&quot;min-h-screen flex items-center justify-center bg-[#F8FAFC]&quot;&gt;
+            &lt;LoadingSpinner size=&quot;lg&quot; /&gt;
+        &lt;/div&gt;
+    );
+}
+
+if (!token) {
+    return null; // No renderiza nada mientras redirige
+}
+
+return &lt;&gt;{children}&lt;/&gt;;
+}
+</file>
+
+<file path="src/components/common/StatusBadge.tsx">
+// src/components/common/StatusBadge.tsx
+
+&apos;use client&apos;;
+
+import { DocumentStatus } from &apos;@/types&apos;;
+import { FaClock, FaSpinner, FaCheckCircle, FaExclamationTriangle, FaTimesCircle } from &apos;react-icons/fa&apos;;
+
+interface StatusBadgeProps {
+    status: DocumentStatus;
+    className?: string;
+}
+
+const statusConfig = {
+PENDING: {
+    label: &apos;Pendiente&apos;,
+    color: &apos;bg-yellow-100 text-yellow-800 border-yellow-300&apos;,
+    icon: FaClock,
+},
+PROCESSING: {
+    label: &apos;Procesando&apos;,
+    color: &apos;bg-blue-100 text-blue-800 border-blue-300&apos;,
+    icon: FaSpinner,
+},
+EXTRACTED: {
+    label: &apos;Extraído&apos;,
+    color: &apos;bg-green-100 text-green-800 border-green-300&apos;,
+    icon: FaCheckCircle,
+},
+FAILED: {
+    label: &apos;Falló&apos;,
+    color: &apos;bg-red-100 text-red-800 border-red-300&apos;,
+    icon: FaTimesCircle,
+},
+NEEDS_REVIEW: {
+    label: &apos;Revisión&apos;,
+    color: &apos;bg-orange-100 text-orange-800 border-orange-300&apos;,
+    icon: FaExclamationTriangle,
+},
+};
+
+export default function StatusBadge({ status, className = &apos;&apos; }: StatusBadgeProps) {
+const config = statusConfig[status];
+const Icon = config?.icon || FaClock;
+
+return (
+    &lt;span
+        className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium border ${config?.color} ${className}`}
+    &gt;
+        &lt;span className=&quot;flex items-center justify-center&quot;&gt;
+        &lt;Icon size={14} /&gt;
+        &lt;/span&gt;
+        {config?.label || status}
+    &lt;/span&gt;
+);
+}
+</file>
+
+<file path="src/components/corrections/CorrectionForm.tsx">
+// src/components/corrections/CorrectionForm.tsx
+
+&apos;use client&apos;;
+
+import { useState } from &apos;react&apos;;
+import { ExtractedLogisticsData } from &apos;@/types&apos;;
+import { FaSave, FaSpinner } from &apos;react-icons/fa&apos;;
+import toast from &apos;react-hot-toast&apos;;
+
+interface CorrectionFormProps {
+  documentId: string;
+  extractedData: ExtractedLogisticsData;
+  onCorrectionSuccess: () =&gt; void;
+  onSubmit: (
+    documentId: string,
+    fieldName: string,
+    originalValue: string | null,
+    correctedValue: string,
+    adapterUsed: string | null
+  ) =&gt; Promise&lt;void&gt;;
+}
+
+// Todos los campos que queremos mostrar (ordenados)
+const ALL_FIELDS: (keyof ExtractedLogisticsData)[] = [
+  &apos;origen&apos;,
+  &apos;destino&apos;,
+  &apos;patente_camion&apos;,
+  &apos;chofer&apos;,
+  &apos;fecha_despacho&apos;,
+  &apos;numero_guia&apos;,
+  &apos;observaciones&apos;,
+];
+
+export default function CorrectionForm({
+  documentId,
+  extractedData,
+  onCorrectionSuccess,
+  onSubmit,
+}: CorrectionFormProps) {
+  // Estado para almacenar los valores corregidos (inicializados con los actuales)
+  const [corrections, setCorrections] = useState&lt;Record&lt;string, string&gt;&gt;(() =&gt; {
+    const initial: Record&lt;string, string&gt; = {};
+    for (const field of ALL_FIELDS) {
+      const value = extractedData[field];
+      initial[field] = typeof value === &apos;string&apos; ? value : &apos;&apos;;
+    }
+    return initial;
+  });
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleChange = (fieldName: string, value: string) =&gt; {
+    setCorrections((prev) =&gt; ({ ...prev, [fieldName]: value }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) =&gt; {
+    e.preventDefault();
+
+    // Recoger solo los campos que cambiaron o que antes estaban vacíos y ahora tienen valor
+    const correctionsToSend: { field: string; original: string | null; corrected: string }[] = [];
+
+    for (const field of ALL_FIELDS) {
+      const original = extractedData[field] as string | null;
+      const corrected = corrections[field]?.trim() || &apos;&apos;;
+      // Enviar si:
+      // - El usuario escribió algo y antes estaba vacío (original null o vacío)
+      // - O el usuario cambió el valor
+      if (corrected &amp;&amp; (original === null || original === undefined || original.trim() === &apos;&apos; || corrected !== original)) {
+        correctionsToSend.push({
+          field,
+          original: original || null,
+          corrected,
+        });
+      }
+    }
+
+    if (correctionsToSend.length === 0) {
+      toast.error(&apos;No has realizado ninguna corrección&apos;);
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      for (const { field, original, corrected } of correctionsToSend) {
+        await onSubmit(
+          documentId,
+          field,
+          original,
+          corrected,
+          extractedData.adapter_used || null
+        );
+      }
+      toast.success(`✅ ${correctionsToSend.length} corrección(es) enviada(s)`);
+      // Resetear el estado de correcciones a los nuevos valores (para que no se reenvíen)
+      const newCorrections: Record&lt;string, string&gt; = {};
+      for (const field of ALL_FIELDS) {
+        newCorrections[field] = corrections[field] || &apos;&apos;;
+      }
+      setCorrections(newCorrections);
+      onCorrectionSuccess();
+    } catch (error) {
+      toast.error(&apos;Error al enviar las correcciones&apos;);
+      console.error(error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    &lt;div className=&quot;bg-white rounded-xl border border-slate-200 p-6&quot;&gt;
+      &lt;h3 className=&quot;text-lg font-semibold text-[#0F172A] mb-4&quot;&gt;
+        ✏️ Corregir campos
+      &lt;/h3&gt;
+      &lt;p className=&quot;text-sm text-slate-500 mb-4&quot;&gt;
+        Completa o corrige los campos que el sistema no pudo extraer correctamente.
+      &lt;/p&gt;
+      &lt;form onSubmit={handleSubmit} className=&quot;space-y-4&quot;&gt;
+        {ALL_FIELDS.map((field) =&gt; {
+          const label = field.replace(/_/g, &apos; &apos;);
+          const value = corrections[field] || &apos;&apos;;
+          const original = extractedData[field] as string | null;
+
+          return (
+            &lt;div key={field} className=&quot;grid grid-cols-1 sm:grid-cols-2 gap-3 items-start&quot;&gt;
+              &lt;label className=&quot;text-sm font-medium text-slate-700 capitalize pt-2&quot;&gt;
+                {label}
+              &lt;/label&gt;
+              &lt;div&gt;
+                &lt;input
+                  type=&quot;text&quot;
+                  value={value}
+                  onChange={(e) =&gt; handleChange(field, e.target.value)}
+                  className=&quot;w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition&quot;
+                  placeholder={original &amp;&amp; original.trim() ? `Original: ${original}` : &apos;No disponible, ingresa un valor&apos;}
+                  disabled={isSubmitting}
+                /&gt;
+                {original &amp;&amp; original.trim() &amp;&amp; (
+                  &lt;p className=&quot;text-xs text-slate-400 mt-1&quot;&gt;
+                    Original: &lt;span className=&quot;font-mono&quot;&gt;{original}&lt;/span&gt;
+                  &lt;/p&gt;
+                )}
+              &lt;/div&gt;
+            &lt;/div&gt;
+          );
+        })}
+
+        &lt;button
+          type=&quot;submit&quot;
+          disabled={isSubmitting}
+          className=&quot;w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors shadow-md disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2&quot;
+        &gt;
+          {isSubmitting ? (
+            &lt;&gt;
+              &lt;span className=&quot;animate-spin&quot;&gt;
+                &lt;FaSpinner size={18} /&gt;
+              &lt;/span&gt;
+              Enviando correcciones...
+            &lt;/&gt;
+          ) : (
+            &lt;&gt;
+              &lt;span&gt;
+                &lt;FaSave size={18} /&gt;
+              &lt;/span&gt;
+              Enviar correcciones
+            &lt;/&gt;
+          )}
+        &lt;/button&gt;
+      &lt;/form&gt;
+    &lt;/div&gt;
+  );
+}
+</file>
+
+<file path="src/components/documents/DocumentCard.tsx">
+&apos;use client&apos;;
+
+import { useState } from &apos;react&apos;;
+import Link from &apos;next/link&apos;;
+import { Document } from &apos;@/types&apos;;
+import StatusBadge from &apos;@/components/common/StatusBadge&apos;;
+import { FaEye, FaFile, FaCalendar, FaEdit, FaSave } from &apos;react-icons/fa&apos;;
+
+interface DocumentCardProps {
+  document: Document;
+}
+
+export default function DocumentCard({ document }: DocumentCardProps) {
+  const confidence = document.extracted_data?.confidence_score;
+
+  // --- ESTADOS PARA LA EDICIÓN (Añadido para el video) ---
+  const [isEditing, setIsEditing] = useState(false);
+  const [formData, setFormData] = useState({
+    // Usamos los datos reales si existen, sino ponemos los de prueba de tu guía para el video
+    chofer: document.extracted_data?.chofer || &apos;Juan Pérez González&apos;,
+    patente_camion: document.extracted_data?.patente_camion || &apos;AB-CD-12&apos;,
+    origen: document.extracted_data?.origen || &apos;Bodega Central, Puerto Montt&apos;,
+    destino: document.extracted_data?.destino || &apos;Centro de Distribución El Roble, Santiago&apos;,
+  });
+
+  const handleChange = (e: React.ChangeEvent&lt;HTMLInputElement&gt;) =&gt; {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleSave = () =&gt; {
+    // Aquí iría el fetch a tu API para guardar en BD. 
+    // Por ahora, solo apagamos el modo edición para que se vea el cambio en pantalla.
+    setIsEditing(false);
+  };
+  // -------------------------------------------------------
+
+  // Formatear fecha manualmente sin date-fns (evita dependencia adicional)
+  const formatDate = (dateString: string) =&gt; {
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, &apos;0&apos;);
+    const month = String(date.getMonth() + 1).padStart(2, &apos;0&apos;);
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+  };
+
+  return (
+    &lt;div className=&quot;bg-white rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-shadow p-6&quot;&gt;
+      
+      {/* --- CABECERA ORIGINAL (Mantenemos tu diseño) --- */}
+      &lt;div className=&quot;flex items-start justify-between border-b border-slate-100 pb-4 mb-4&quot;&gt;
+        {/* Icono + Nombre */}
+        &lt;div className=&quot;flex items-start gap-4 min-w-0&quot;&gt;
+          &lt;div className=&quot;bg-blue-50 text-blue-600 p-3 rounded-lg flex-shrink-0&quot;&gt;
+            &lt;FaFile size={20} /&gt;
+          &lt;/div&gt;
+          &lt;div className=&quot;min-w-0&quot;&gt;
+            &lt;h3 className=&quot;font-semibold text-[#0F172A] text-lg truncate max-w-[200px] sm:max-w-xs&quot;&gt;
+              {document.filename}
+            &lt;/h3&gt;
+            &lt;div className=&quot;flex items-center gap-3 mt-1.5 flex-wrap&quot;&gt;
+              &lt;StatusBadge status={document.status} /&gt;
+              {confidence !== undefined &amp;&amp; confidence !== null &amp;&amp; (
+                &lt;span
+                  className={`text-sm font-medium ${
+                    confidence &gt;= 80
+                      ? &apos;text-green-600&apos;
+                      : confidence &gt;= 50
+                      ? &apos;text-yellow-600&apos;
+                      : &apos;text-red-600&apos;
+                  }`}
+                &gt;
+                  Confianza: {Math.round(confidence)}%
+                &lt;/span&gt;
+              )}
+            &lt;/div&gt;
+          &lt;/div&gt;
+        &lt;/div&gt;
+
+        {/* Fecha + Botones */}
+        &lt;div className=&quot;flex flex-col items-end gap-3 flex-shrink-0 ml-4&quot;&gt;
+          &lt;span className=&quot;text-sm text-slate-500 flex items-center gap-1.5 whitespace-nowrap&quot;&gt;
+            &lt;FaCalendar size={14} /&gt;
+            {formatDate(document.created_at)}
+          &lt;/span&gt;
+          &lt;div className=&quot;flex items-center gap-4&quot;&gt;
+            {/* Botón Editar/Guardar */}
+            &lt;button
+              onClick={() =&gt; isEditing ? handleSave() : setIsEditing(true)}
+              className={`flex items-center gap-1.5 text-sm font-medium transition-colors ${
+                isEditing 
+                  ? &apos;text-green-600 hover:text-green-700&apos; 
+                  : &apos;text-orange-500 hover:text-orange-600&apos;
+              }`}
+            &gt;
+              {isEditing ? &lt;&gt;&lt;FaSave size={16} /&gt; Guardar&lt;/&gt; : &lt;&gt;&lt;FaEdit size={16} /&gt; Editar&lt;/&gt;}
+            &lt;/button&gt;
+            
+            {/* Tu botón original de Ver Detalle */}
+            &lt;Link
+              href={`/documents/${document.id}`}
+              className=&quot;flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors&quot;
+            &gt;
+              &lt;FaEye size={16} /&gt;
+              Ver detalle
+            &lt;/Link&gt;
+          &lt;/div&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+
+      {/* --- NUEVA SECCIÓN: DATOS EXTRAÍDOS Y EDITABLES --- */}
+      &lt;div&gt;
+        &lt;h4 className=&quot;text-xs font-bold text-slate-400 uppercase tracking-wider mb-3&quot;&gt;
+          Datos de Transporte Extraídos
+        &lt;/h4&gt;
+        
+        {isEditing ? (
+          // MODO EDICIÓN
+          &lt;div className=&quot;grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-lg border border-slate-200&quot;&gt;
+            &lt;div&gt;
+              &lt;label className=&quot;block text-xs font-semibold text-slate-600 mb-1&quot;&gt;Chofer&lt;/label&gt;
+              &lt;input name=&quot;chofer&quot; value={formData.chofer} onChange={handleChange} 
+                className=&quot;w-full text-sm p-2 border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 outline-none&quot; /&gt;
+            &lt;/div&gt;
+            &lt;div&gt;
+              &lt;label className=&quot;block text-xs font-semibold text-slate-600 mb-1&quot;&gt;Patente&lt;/label&gt;
+              &lt;input name=&quot;patente_camion&quot; value={formData.patente_camion} onChange={handleChange} 
+                className=&quot;w-full text-sm p-2 border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 outline-none&quot; /&gt;
+            &lt;/div&gt;
+            &lt;div&gt;
+              &lt;label className=&quot;block text-xs font-semibold text-slate-600 mb-1&quot;&gt;Origen&lt;/label&gt;
+              &lt;input name=&quot;origen&quot; value={formData.origen} onChange={handleChange} 
+                className=&quot;w-full text-sm p-2 border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 outline-none&quot; /&gt;
+            &lt;/div&gt;
+            &lt;div&gt;
+              &lt;label className=&quot;block text-xs font-semibold text-slate-600 mb-1&quot;&gt;Destino&lt;/label&gt;
+              &lt;input name=&quot;destino&quot; value={formData.destino} onChange={handleChange} 
+                className=&quot;w-full text-sm p-2 border border-slate-300 rounded focus:ring-blue-500 focus:border-blue-500 outline-none&quot; /&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+        ) : (
+          // MODO VISTA
+          &lt;div className=&quot;grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-4 bg-slate-50/50 p-4 rounded-lg&quot;&gt;
+            &lt;div&gt;
+              &lt;p className=&quot;text-xs font-semibold text-slate-500&quot;&gt;Chofer&lt;/p&gt;
+              &lt;p className=&quot;text-sm font-medium text-slate-800&quot;&gt;{formData.chofer}&lt;/p&gt;
+            &lt;/div&gt;
+            &lt;div&gt;
+              &lt;p className=&quot;text-xs font-semibold text-slate-500&quot;&gt;Patente&lt;/p&gt;
+              &lt;p className=&quot;text-sm font-medium text-slate-800&quot;&gt;{formData.patente_camion}&lt;/p&gt;
+            &lt;/div&gt;
+            &lt;div&gt;
+              &lt;p className=&quot;text-xs font-semibold text-slate-500&quot;&gt;Origen&lt;/p&gt;
+              &lt;p className=&quot;text-sm font-medium text-slate-800&quot;&gt;{formData.origen}&lt;/p&gt;
+            &lt;/div&gt;
+            &lt;div&gt;
+              &lt;p className=&quot;text-xs font-semibold text-slate-500&quot;&gt;Destino&lt;/p&gt;
+              &lt;p className=&quot;text-sm font-medium text-slate-800&quot;&gt;{formData.destino}&lt;/p&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+        )}
+      &lt;/div&gt;
+    &lt;/div&gt;
+  );
+}
+
+</file>
+
+<file path="src/components/upload/PipelineVisual.tsx">
+// src/components/upload/PipelineVisual.tsx
+
+&apos;use client&apos;;
+
+import { FaCheckCircle, FaSpinner, FaCircle } from &apos;react-icons/fa&apos;;
+
+export interface Step {
+  id: string;
+  label: string;
+  status: &apos;idle&apos; | &apos;processing&apos; | &apos;done&apos; | &apos;error&apos;;
+}
+
+interface PipelineVisualProps {
+  steps: Step[];
+}
+
+export default function PipelineVisual({ steps }: PipelineVisualProps) {
+  const getIcon = (status: Step[&apos;status&apos;]) =&gt; {
+    switch (status) {
+      case &apos;done&apos;:
+        return (
+          &lt;span className=&quot;text-green-500&quot;&gt;
+            &lt;FaCheckCircle size={20} /&gt;
+          &lt;/span&gt;
+        );
+      case &apos;processing&apos;:
+        return (
+          &lt;span className=&quot;text-blue-500 animate-spin&quot;&gt;
+            &lt;FaSpinner size={20} /&gt;
+          &lt;/span&gt;
+        );
+      case &apos;error&apos;:
+        return (
+          &lt;span className=&quot;text-red-500&quot;&gt;
+            &lt;FaCircle size={20} /&gt;
+          &lt;/span&gt;
+        );
+      default:
+        return (
+          &lt;span className=&quot;text-slate-300&quot;&gt;
+            &lt;FaCircle size={20} /&gt;
+          &lt;/span&gt;
+        );
+    }
+  };
+
+  const getLineColor = (status: Step[&apos;status&apos;]) =&gt; {
+    return status === &apos;idle&apos; ? &apos;bg-slate-200&apos; : 
+           status === &apos;done&apos; ? &apos;bg-green-500&apos; :
+           status === &apos;error&apos; ? &apos;bg-red-500&apos; :
+           &apos;bg-blue-500&apos;;
+  };
+
+  return (
+    &lt;div className=&quot;bg-white rounded-xl border border-slate-200 p-6&quot;&gt;
+      &lt;h3 className=&quot;text-sm font-semibold text-slate-500 uppercase tracking-wider mb-6&quot;&gt;
+        Pipeline de procesamiento
+      &lt;/h3&gt;
+      &lt;div className=&quot;space-y-0&quot;&gt;
+        {steps.map((step, index) =&gt; (
+          &lt;div key={step.id} className=&quot;relative&quot;&gt;
+            {/* Línea conectora */}
+            {index &lt; steps.length - 1 &amp;&amp; (
+              &lt;div
+                className={`absolute left-[9px] top-[30px] w-0.5 h-[30px] transition-colors duration-500 ${getLineColor(step.status)}`}
+              /&gt;
+            )}
+
+            &lt;div className=&quot;flex items-start gap-4 py-2&quot;&gt;
+              &lt;div className=&quot;flex-shrink-0 w-5 h-5 mt-0.5 flex items-center justify-center&quot;&gt;
+                {getIcon(step.status)}
+              &lt;/div&gt;
+              &lt;div className=&quot;flex-1&quot;&gt;
+                &lt;p
+                  className={`font-medium text-sm ${
+                    step.status === &apos;idle&apos; ? &apos;text-slate-400&apos; :
+                    step.status === &apos;done&apos; ? &apos;text-green-700&apos; :
+                    step.status === &apos;error&apos; ? &apos;text-red-600&apos; :
+                    &apos;text-blue-700&apos;
+                  }`}
+                &gt;
+                  {step.label}
+                &lt;/p&gt;
+                {step.status === &apos;processing&apos; &amp;&amp; (
+                  &lt;p className=&quot;text-xs text-slate-400 mt-0.5&quot;&gt;Procesando...&lt;/p&gt;
+                )}
+                {step.status === &apos;done&apos; &amp;&amp; (
+                  &lt;p className=&quot;text-xs text-green-500 mt-0.5&quot;&gt;Completado&lt;/p&gt;
+                )}
+                {step.status === &apos;error&apos; &amp;&amp; (
+                  &lt;p className=&quot;text-xs text-red-500 mt-0.5&quot;&gt;Error&lt;/p&gt;
+                )}
+              &lt;/div&gt;
+            &lt;/div&gt;
+          &lt;/div&gt;
+        ))}
+      &lt;/div&gt;
+    &lt;/div&gt;
+  );
+}
+</file>
+
+<file path="src/components/upload/UploadDropZone.tsx">
+&quot;use client&quot;;
+
+import React, { useCallback, useRef, useState } from &apos;react&apos;;
+
+interface UploadDropzoneProps {
+  onFileSelect: (file: File) =&gt; void;
+  selectedFile: File | null;
+  isLoading?: boolean;
+}
+
+export default function UploadDropzone({ onFileSelect, selectedFile, isLoading = false }: UploadDropzoneProps) {
+  const inputRef = useRef&lt;HTMLInputElement | null&gt;(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const openFilePicker = useCallback(() =&gt; {
+    inputRef.current?.click();
+  }, []);
+
+  const handleFiles = useCallback((files: FileList | null) =&gt; {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    onFileSelect(file);
+  }, [onFileSelect]);
+
+  return (
+    &lt;div&gt;
+      &lt;input
+        ref={inputRef}
+        type=&quot;file&quot;
+        accept=&quot;application/pdf&quot;
+        className=&quot;hidden&quot;
+        onChange={(e) =&gt; handleFiles(e.target.files)}
+      /&gt;
+
+      &lt;div
+        onClick={openFilePicker}
+        onDragOver={(e) =&gt; { e.preventDefault(); setIsDragOver(true); }}
+        onDragLeave={() =&gt; setIsDragOver(false)}
+        onDrop={(e) =&gt; { e.preventDefault(); setIsDragOver(false); handleFiles(e.dataTransfer.files); }}
+        className={`w-full border-2 border-dashed rounded-lg p-8 text-center cursor-pointer ${isDragOver ? &apos;border-blue-400 bg-blue-50&apos; : &apos;border-slate-200 bg-white&apos;}`}
+        aria-label=&quot;Upload PDF&quot;
+      &gt;
+        {isLoading ? (
+          &lt;div className=&quot;text-sm text-slate-500&quot;&gt;Cargando...&lt;/div&gt;
+        ) : selectedFile ? (
+          &lt;div className=&quot;text-sm text-slate-700&quot;&gt;Archivo seleccionado: {selectedFile.name}&lt;/div&gt;
+        ) : (
+          &lt;div&gt;
+            &lt;div className=&quot;font-medium text-slate-700&quot;&gt;Arrastra y suelta tu PDF aquí&lt;/div&gt;
+            &lt;div className=&quot;text-sm text-slate-500 mt-1&quot;&gt;o haz clic para seleccionar un archivo&lt;/div&gt;
+          &lt;/div&gt;
+        )}
+      &lt;/div&gt;
+    &lt;/div&gt;
+  );
+}
+</file>
+
+<file path="src/components/[id]/page.tsx">
+// src/app/(dashboard)/documents/[id]/page.tsx
+
+&apos;use client&apos;;
+
+import { useEffect, useState } from &apos;react&apos;;
+import { useParams, useRouter } from &apos;next/navigation&apos;;
+import Link from &apos;next/link&apos;;
+import { useAuth } from &apos;@/context/AuthContext&apos;;
+import { documentsApi } from &apos;@/lib/api&apos;;
+import { Document, CorrectionPayload } from &apos;@/types&apos;;
+import StatusBadge from &apos;@/components/common/StatusBadge&apos;;
+import LoadingSpinner from &apos;@/components/common/LoadingSpinner&apos;;
+import CorrectionForm from &apos;@/components/corrections/CorrectionForm&apos;;
+import { FaArrowLeft, FaCheckCircle, FaExclamationTriangle, FaInfoCircle } from &apos;react-icons/fa&apos;;
+import toast from &apos;react-hot-toast&apos;;
+
+export default function DocumentDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const { token } = useAuth();
+  const documentId = params.id as string;
+
+  const [document, setDocument] = useState&lt;Document | null&gt;(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const loadDocument = async () =&gt; {
+    if (!token) return;
+    setIsLoading(true);
+    try {
+      const response = await documentsApi.get(documentId, token);
+      setDocument(response.data);
+    } catch (error: any) {
+      if (error.response?.status === 404) {
+        toast.error(&apos;Documento no encontrado&apos;);
+        router.push(&apos;/&apos;);
+      } else if (error.response?.status === 403) {
+        toast.error(&apos;No tienes permiso para ver este documento&apos;);
+        router.push(&apos;/&apos;);
+      } else {
+        toast.error(&apos;Error al cargar el documento&apos;);
+      }
+      console.error(error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() =&gt; {
+    loadDocument();
+  }, [documentId, token]);
+
+  const handleCorrectionSuccess = async () =&gt; {
+    setIsRefreshing(true);
+    await loadDocument();
+    setIsRefreshing(false);
+  };
+
+  const handleSubmitCorrection = async (
+    docId: string,
+    fieldName: string,
+    originalValue: string | null,
+    correctedValue: string,
+    adapterUsed: string | null
+  ) =&gt; {
+    const payload: CorrectionPayload = {
+      field_name: fieldName,
+      original_value: originalValue,
+      corrected_value: correctedValue,
+      adapter_used: adapterUsed,
+    };
+    await documentsApi.submitCorrection(docId, payload, token!);
+  };
+
+  if (isLoading) {
+    return (
+      &lt;div className=&quot;flex justify-center items-center min-h-[60vh]&quot;&gt;
+        &lt;LoadingSpinner size=&quot;lg&quot; /&gt;
+      &lt;/div&gt;
+    );
+  }
+
+  if (!document) {
+    return (
+      &lt;div className=&quot;text-center py-12&quot;&gt;
+        &lt;p className=&quot;text-slate-500&quot;&gt;Documento no encontrado&lt;/p&gt;
+        &lt;Link href=&quot;/&quot; className=&quot;text-blue-600 hover:underline mt-2 inline-block&quot;&gt;
+          Volver al dashboard
+        &lt;/Link&gt;
+      &lt;/div&gt;
+    );
+  }
+
+  const data = document.extracted_data;
+  const isNeedsReview = document.status === &apos;NEEDS_REVIEW&apos;;
+  const isExtracted = document.status === &apos;EXTRACTED&apos;;
+  const isFailed = document.status === &apos;FAILED&apos;;
+
+  return (
+    &lt;div className=&quot;max-w-4xl mx-auto&quot;&gt;
+      {/* Header */}
+      &lt;div className=&quot;flex items-center gap-4 mb-6&quot;&gt;
+        &lt;Link
+          href=&quot;/&quot;
+          className=&quot;text-slate-500 hover:text-slate-700 transition-colors&quot;
+        &gt;
+          &lt;span&gt;
+            &lt;FaArrowLeft size={20} /&gt;
+          &lt;/span&gt;
+        &lt;/Link&gt;
+        &lt;div className=&quot;flex-1&quot;&gt;
+          &lt;h1 className=&quot;text-2xl font-bold text-[#0F172A] truncate&quot;&gt;
+            {document.filename}
+          &lt;/h1&gt;
+          &lt;div className=&quot;flex items-center gap-3 mt-1 flex-wrap&quot;&gt;
+            &lt;StatusBadge status={document.status} /&gt;
+            {data?.confidence_score !== undefined &amp;&amp; data?.confidence_score !== null &amp;&amp; (
+              &lt;span
+                className={`text-sm font-medium ${
+                  data.confidence_score &gt;= 80
+                    ? &apos;text-green-600&apos;
+                    : data.confidence_score &gt;= 50
+                    ? &apos;text-yellow-600&apos;
+                    : &apos;text-red-600&apos;
+                }`}
+              &gt;
+                Confianza: {Math.round(data.confidence_score)}%
+              &lt;/span&gt;
+            )}
+            {data?.adapter_used &amp;&amp; (
+              &lt;span className=&quot;text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded-full&quot;&gt;
+                {data.adapter_used}
+              &lt;/span&gt;
+            )}
+          &lt;/div&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+
+      {/* Contenido principal */}
+      &lt;div className=&quot;grid md:grid-cols-3 gap-6&quot;&gt;
+        {/* Datos extraídos */}
+        &lt;div className=&quot;md:col-span-2&quot;&gt;
+          &lt;div className=&quot;bg-white rounded-xl border border-slate-200 p-6&quot;&gt;
+            &lt;h2 className=&quot;text-lg font-semibold text-[#0F172A] mb-4&quot;&gt;
+              📋 Datos extraídos
+            &lt;/h2&gt;
+
+            {isFailed ? (
+              &lt;div className=&quot;bg-red-50 border border-red-200 rounded-lg p-4 text-red-700&quot;&gt;
+                &lt;p className=&quot;font-medium&quot;&gt;Error en el procesamiento&lt;/p&gt;
+                &lt;p className=&quot;text-sm mt-1&quot;&gt;{document.error_logs || &apos;Error desconocido&apos;}&lt;/p&gt;
+              &lt;/div&gt;
+            ) : data ? (
+              &lt;div className=&quot;grid grid-cols-1 sm:grid-cols-2 gap-4&quot;&gt;
+                {Object.entries(data)
+                  .filter(
+                    ([key, value]) =&gt;
+                      key !== &apos;adapter_used&apos; &amp;&amp;
+                      key !== &apos;confidence_score&apos; &amp;&amp;
+                      value !== null &amp;&amp;
+                      value !== undefined &amp;&amp;
+                      value !== &apos;&apos;
+                  )
+                  .map(([key, value]) =&gt; (
+                    &lt;div key={key} className=&quot;border-b border-slate-100 pb-2&quot;&gt;
+                      &lt;p className=&quot;text-xs text-slate-400 uppercase tracking-wider&quot;&gt;
+                        {key.replace(/_/g, &apos; &apos;)}
+                      &lt;/p&gt;
+                      &lt;p className=&quot;text-sm font-medium text-[#0F172A] mt-0.5&quot;&gt;
+                        {value as string}
+                      &lt;/p&gt;
+                    &lt;/div&gt;
+                  ))}
+              &lt;/div&gt;
+            ) : (
+              &lt;p className=&quot;text-slate-500 text-sm&quot;&gt;No se extrajeron datos&lt;/p&gt;
+            )}
+          &lt;/div&gt;
+        &lt;/div&gt;
+
+        {/* Sidebar: Estado del pipeline + acciones */}
+        &lt;div className=&quot;md:col-span-1 space-y-4&quot;&gt;
+          {/* Estado del documento */}
+          &lt;div className=&quot;bg-white rounded-xl border border-slate-200 p-6&quot;&gt;
+            &lt;h3 className=&quot;text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3&quot;&gt;
+              Estado
+            &lt;/h3&gt;
+            &lt;div className=&quot;flex items-center gap-2&quot;&gt;
+              {isExtracted &amp;&amp; (
+                &lt;&gt;
+                  &lt;span className=&quot;text-green-500&quot;&gt;
+                    &lt;FaCheckCircle size={20} /&gt;
+                  &lt;/span&gt;
+                  &lt;span className=&quot;text-green-700 font-medium&quot;&gt;Documento validado&lt;/span&gt;
+                &lt;/&gt;
+              )}
+              {isNeedsReview &amp;&amp; (
+                &lt;&gt;
+                  &lt;span className=&quot;text-orange-500&quot;&gt;
+                    &lt;FaExclamationTriangle size={20} /&gt;
+                  &lt;/span&gt;
+                  &lt;span className=&quot;text-orange-700 font-medium&quot;&gt;Requiere revisión&lt;/span&gt;
+                &lt;/&gt;
+              )}
+              {isFailed &amp;&amp; (
+                &lt;&gt;
+                  &lt;span className=&quot;text-red-500&quot;&gt;
+                    &lt;FaInfoCircle size={20} /&gt;
+                  &lt;/span&gt;
+                  &lt;span className=&quot;text-red-700 font-medium&quot;&gt;Error en el proceso&lt;/span&gt;
+                &lt;/&gt;
+              )}
+            &lt;/div&gt;
+            {isNeedsReview &amp;&amp; (
+              &lt;p className=&quot;text-xs text-slate-500 mt-2&quot;&gt;
+                El sistema no está seguro de estos datos. Revisa y corrige los campos necesarios.
+              &lt;/p&gt;
+            )}
+          &lt;/div&gt;
+
+          {/* Acciones rápidas */}
+          &lt;div className=&quot;bg-white rounded-xl border border-slate-200 p-6&quot;&gt;
+            &lt;h3 className=&quot;text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3&quot;&gt;
+              Acciones
+            &lt;/h3&gt;
+            &lt;button
+              onClick={() =&gt; loadDocument()}
+              disabled={isRefreshing}
+              className=&quot;w-full text-center text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors disabled:opacity-50&quot;
+            &gt;
+              {isRefreshing ? &apos;Actualizando...&apos; : &apos;🔄 Actualizar&apos;}
+            &lt;/button&gt;
+          &lt;/div&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+
+      {/* Formulario de corrección (solo si NEEDS_REVIEW) */}
+      {isNeedsReview &amp;&amp; data &amp;&amp; (
+        &lt;div className=&quot;mt-6&quot;&gt;
+          &lt;CorrectionForm
+            documentId={document.id}
+            extractedData={data}
+            onCorrectionSuccess={handleCorrectionSuccess}
+            onSubmit={handleSubmitCorrection}
+          /&gt;
+        &lt;/div&gt;
+      )}
+    &lt;/div&gt;
+  );
+}
+</file>
+
+<file path="src/context/AuthContext.tsx">
+// src/context/AuthContext.tsx
+
+&apos;use client&apos;;
+
+import React, {
+    createContext,
+    useEffect,
+    useState,
+    useCallback,
+    useMemo,
+} from &apos;react&apos;;
+import { useRouter } from &apos;next/navigation&apos;;
+import { authApi } from &apos;@/lib/api&apos;;
+import { User, LoginCredentials, RegisterPayload } from &apos;@/types&apos;;
+import toast from &apos;react-hot-toast&apos;;
+
+interface AuthContextType {
+    user: User | null;
+    token: string | null;
+    isLoading: boolean;
+    login: (credentials: LoginCredentials) =&gt; Promise&lt;void&gt;;
+    register: (payload: RegisterPayload) =&gt; Promise&lt;void&gt;;
+    logout: () =&gt; void;
+}
+
+// ✅ EXPORTADO para que useAuth pueda importarlo
+export const AuthContext = createContext&lt;AuthContextType | undefined&gt;(undefined);
+
+export const AuthProvider = ({ children }: { children: React.ReactNode }) =&gt; {
+    const router = useRouter();
+    const [user, setUser] = useState&lt;User | null&gt;(null);
+    const [token, setToken] = useState&lt;string | null&gt;(null);
+    const [isLoading, setIsLoading] = useState&lt;boolean&gt;(true);
+
+  // --- Hidratación desde localStorage ---
+useEffect(() =&gt; {
+    const storedToken = localStorage.getItem(&apos;auth_token&apos;);
+    const storedUser = localStorage.getItem(&apos;auth_user&apos;);
+
+    if (storedToken &amp;&amp; storedUser) {
+        try {
+        setToken(storedToken);
+        setUser(JSON.parse(storedUser));
+    } catch {
+        localStorage.removeItem(&apos;auth_token&apos;);
+        localStorage.removeItem(&apos;auth_user&apos;);
+    }
+    }
+    setIsLoading(false);
+}, []);
+
+  // --- Logout (centralizado) ---
+const logout = useCallback(() =&gt; {
+    localStorage.removeItem(&apos;auth_token&apos;);
+    localStorage.removeItem(&apos;auth_user&apos;);
+    setToken(null);
+    setUser(null);
+    router.push(&apos;/login&apos;);
+    toast.success(&apos;Sesión cerrada&apos;);
+}, [router]);
+
+  // --- Escuchar evento de 401 (desde el interceptor de Axios) ---
+useEffect(() =&gt; {
+    const handleUnauthorized = () =&gt; {
+        toast.error(&apos;Tu sesión ha expirado. Inicia sesión nuevamente.&apos;);
+        logout();
+    };
+
+    window.addEventListener(&apos;unauthorized&apos;, handleUnauthorized);
+    return () =&gt; window.removeEventListener(&apos;unauthorized&apos;, handleUnauthorized);
+}, [logout]);
+
+  // --- Login ---
+const login = useCallback(
+async (credentials: LoginCredentials) =&gt; {
+    setIsLoading(true);
+    try {
+        const response = await authApi.login(credentials);
+        const { access_token } = response.data;
+
+        // Mock de usuario (sin endpoint /users/me)
+        const mockUser: User = {
+            id: &apos;temp-id&apos;,
+            email: credentials.email,
+            full_name: credentials.email.split(&apos;@&apos;)[0],
+            is_active: true,
+            created_at: new Date().toISOString(),
+        };
+
+        localStorage.setItem(&apos;auth_token&apos;, access_token);
+        localStorage.setItem(&apos;auth_user&apos;, JSON.stringify(mockUser));
+
+        setToken(access_token);
+        setUser(mockUser);
+
+        toast.success(&apos;Bienvenido a LogisParse 🚀&apos;);
+        router.push(&apos;/&apos;);
+    } catch (error: any) {
+        const message = error.response?.data?.detail || &apos;Error al iniciar sesión&apos;;
+        toast.error(message);
+        throw error;
+    } finally {
+        setIsLoading(false);
+    }
+    },
+    [router]
+);
+
+  // --- Register ---
+const register = useCallback(
+    async (payload: RegisterPayload) =&gt; {
+        setIsLoading(true);
+        try {
+            await authApi.register(payload);
+            toast.success(&apos;Registro exitoso. Ahora inicia sesión.&apos;);
+            router.push(&apos;/login&apos;);
+    } catch (error: any) {
+        const message = error.response?.data?.detail || &apos;Error al registrarse&apos;;
+        toast.error(message);
+        throw error;
+    } finally {
+        setIsLoading(false);
+    }
+    },
+    [router]
+);
+
+const value = useMemo(
+    () =&gt; ({ user, token, isLoading, login, register, logout }),
+    [user, token, isLoading, login, register, logout]
+);
+
+return &lt;AuthContext.Provider value={value}&gt;{children}&lt;/AuthContext.Provider&gt;;
+};
+
+// ✅ Hook para consumir el contexto (más limpio)
+export const useAuth = (): AuthContextType =&gt; {
+    const context = React.useContext(AuthContext);
+    if (context === undefined) {
+        throw new Error(&apos;useAuth must be used within an AuthProvider&apos;);
+}
+return context;
+};
+</file>
+
+</repository>

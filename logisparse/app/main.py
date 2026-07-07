@@ -73,16 +73,20 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Add middleware
+    # Add middleware (El orden es importante en FastAPI)
     app.add_middleware(InMemoryRateLimitMiddleware)
     app.add_middleware(RequestContextMiddleware)
 
+    # --- CORRECCIÓN DE CORS AQUÍ ---
+    # Unimos el localhost:3000 fijo con lo que sea que traigas en tus settings
+    allowed_origins = list(set(["http://localhost:3000", "http://127.0.0.1:3000"] + settings.ALLOWED_ORIGINS))
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.ALLOWED_ORIGINS,
+        allow_origins=allowed_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+        allow_methods=["*"],  # Modificado para aceptar todos los métodos (PUT, DELETE, etc.)
+        allow_headers=["*"],  # Modificado para aceptar cualquier header de React/Axios
     )
 
     # Include routers

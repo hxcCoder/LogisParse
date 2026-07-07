@@ -1,0 +1,2219 @@
+<repository>
+
+<directory_tree>
+├── __init__.py
+├── api
+│   ├── __init__.py
+│   ├── deps.py
+│   └── v1
+│       ├── __init__.py
+│       ├── auth.py
+│       └── documents.py
+├── core
+│   ├── __init__.py
+│   ├── config.py
+│   ├── database.py
+│   ├── exceptions.py
+│   ├── logging.py
+│   ├── middleware.py
+│   └── security.py
+├── crud
+│   ├── __init__.py
+│   ├── crud_document.py
+│   └── crud_user.py
+├── main.py
+├── models
+│   ├── __init__.py
+│   ├── base.py
+│   ├── document.py
+│   └── user.py
+├── schemas
+│   ├── __init__.py
+│   ├── document.py
+│   ├── extraction.py
+│   ├── token.py
+│   └── user.py
+└── services
+    ├── __init__.py
+    ├── document_extractor.py
+    ├── extractors
+    │   ├── adapter_factory.py
+    │   ├── base_adapter.py
+    │   ├── generic_llm_adapter.py
+    │   └── specific
+    │       ├── chilean_guia_adapter.py
+    │       └── starken_adapter.py
+    └── upload_validation.py
+</directory_tree>
+
+<file path="api/deps.py">
+&quot;&quot;&quot;FastAPI dependency injections.
+
+All dependencies are defined here and explicitly passed to endpoints via Depends().
+This ensures:
+- No global state in imports
+- Full testability via dependency_overrides
+- Explicit dependency graph
+- Type safety
+&quot;&quot;&quot;
+
+import logging
+from collections.abc import AsyncGenerator
+from typing import Annotated
+
+from fastapi import Depends, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.core.config import Settings, get_settings
+from app.core.exceptions import InvalidCredentialsException, UserInactiveException
+from app.core.security import decode_token
+from app.crud.crud_user import get_user_by_id
+from app.models.user import User
+
+logger = logging.getLogger(__name__)
+security = HTTPBearer(auto_error=True)
+
+
+# ── SETTINGS DEPENDENCY ──────────────────────────────────
+def get_settings_dep() -&gt; Settings:
+    &quot;&quot;&quot;Inject Settings instance.
+
+    This can be overridden in tests:
+    app.dependency_overrides[get_settings_dep] = lambda: fake_settings
+    &quot;&quot;&quot;
+    return get_settings()
+
+
+# ── DATABASE DEPENDENCY ──────────────────────────────────
+async def get_db(request: Request) -&gt; AsyncGenerator[AsyncSession, None]:
+    &quot;&quot;&quot;Inject AsyncSession from FastAPI app.state.session_maker.
+
+    The session_maker must be set during app startup (in lifespan).
+
+    This dependency:
+    - Retrieves session_maker from app.state (set during startup)
+    - Creates a new session per request
+    - Automatically yields and closes the session
+    - Can be overridden in tests via app.dependency_overrides[get_db]
+
+    Args:
+        request: FastAPI Request object (contains app.state)
+
+    Yields:
+        AsyncSession instance for database operations
+    &quot;&quot;&quot;
+    session_maker: async_sessionmaker[AsyncSession] = request.app.state.session_maker
+
+    async with session_maker() as session:
+        yield session
+
+
+# ── AUTHENTICATION DEPENDENCY ────────────────────────────
+async def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+) -&gt; User:
+    &quot;&quot;&quot;Inject current authenticated user from JWT token.
+
+    Args:
+        credentials: JWT token from Authorization header
+        db: Database session
+        settings: Settings for JWT decoding
+
+    Returns:
+        Authenticated and active User instance
+
+    Raises:
+        InvalidCredentialsException: If token is invalid or user not found
+        UserInactiveException: If user is not active
+    &quot;&quot;&quot;
+    payload = decode_token(credentials.credentials, settings.SECRET_KEY, settings.ALGORITHM)
+    if payload is None:
+        raise InvalidCredentialsException()
+
+    user_id = payload.get(&quot;sub&quot;)
+    if not isinstance(user_id, str):
+        raise InvalidCredentialsException()
+
+    user = await get_user_by_id(db, user_id)
+    if user is None:
+        logger.info(&quot;Token references missing user_id=%s&quot;, user_id)
+        raise InvalidCredentialsException()
+
+    if not user.is_active:
+        raise UserInactiveException()
+
+    return user
+
+</file>
+
+<file path="api/v1/auth.py">
+from datetime import timedelta
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_db, get_settings_dep
+from app.core.config import Settings
+from app.core.exceptions import (
+    EmailAlreadyRegistered,
+    InvalidCredentialsException,
+    UserInactiveException,
+)
+from app.core.security import create_access_token
+from app.crud.crud_user import (
+    authenticate_user,
+    create_user,
+    get_user_by_email,
+)
+from app.schemas.token import TokenResponse
+from app.schemas.user import UserCreate, UserLogin, UserResponse
+
+router = APIRouter()
+
+
+@router.post(
+    &quot;/register&quot;,
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register(
+    user_data: UserCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -&gt; UserResponse:
+    existing_user = await get_user_by_email(db, user_data.email)
+
+    if existing_user is not None:
+        raise EmailAlreadyRegistered()
+
+    user = await create_user(
+        db,
+        email=user_data.email,
+        password=user_data.password,
+        full_name=user_data.full_name,
+    )
+
+    return UserResponse.model_validate(user)
+
+
+@router.post(&quot;/login&quot;, response_model=TokenResponse)
+async def login(
+    credentials: UserLogin,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+) -&gt; TokenResponse:
+    user = await authenticate_user(
+        db,
+        credentials.email,
+        credentials.password,
+    )
+
+    if user is None:
+        raise InvalidCredentialsException()
+
+    if not user.is_active:
+        raise UserInactiveException()
+
+    access_token = create_access_token(
+        data={&quot;sub&quot;: str(user.id)},
+        secret_key=settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM,
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+
+    return TokenResponse(access_token=access_token)
+
+</file>
+
+<file path="api/v1/documents.py">
+&quot;&quot;&quot;Documents API router.
+
+Upload → validate → extract → store.
+Evolucionado a SaaS: Evalúa confidence_score y redirige a revisión humana si es necesario.
+&quot;&quot;&quot;
+from sqlalchemy import select
+from app.models.document import Document
+
+import logging
+from typing import Annotated
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_current_user, get_db, get_settings_dep
+from app.core.config import Settings
+from app.core.exceptions import DocumentNotFound
+from app.crud.crud_document import (
+    create_data_correction,  # &lt;-- NUEVO
+    create_document,
+    get_document_by_id,
+    get_recent_corrections,  # &lt;-- NUEVO
+    get_user_documents,
+    update_document_status,
+)
+from app.models.document import DocumentStatus
+from app.models.user import User
+from app.schemas.document import DataCorrectionCreate, DataCorrectionResponse, DocumentResponse
+from app.services.document_extractor import extract_document
+from app.services.upload_validation import read_and_validate_upload
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+@router.post(
+    &quot;/upload&quot;,
+    response_model=DocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_document(
+    file: Annotated[UploadFile, File()],
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+) -&gt; DocumentResponse:
+    filename, content_type, file_content = await read_and_validate_upload(file)
+
+    document = await create_document(
+        db=db,
+        user_id=current_user.id,
+        filename=filename,
+        content_type=content_type,
+    )
+
+    processing_document = await update_document_status(
+        db=db,
+        document_id=document.id,
+        status=DocumentStatus.PROCESSING,
+    )
+
+    if processing_document is None:
+        raise DocumentNotFound()
+
+    document = processing_document
+
+    # --- OBTENER HISTORIAL DE CORRECCIONES PARA CONTEXTO ---
+    correction_history = await get_recent_corrections(
+        db=db,
+        user_id=current_user.id,
+        limit=5,
+    )
+
+    try:
+        # Pasamos el historial al orquestador
+        extracted_data = await extract_document(
+            file_bytes=file_content,
+            filename=filename,
+            content_type=content_type,
+            settings=settings,
+            correction_history=correction_history,  # &lt;-- NUEVO
+        )
+
+    except ValueError as exc:
+        logger.info(
+            &quot;Document validation failed for document_id=%s: %s&quot;,
+            document.id,
+            exc,
+        )
+
+        failed_document = await update_document_status(
+            db=db,
+            document_id=document.id,
+            status=DocumentStatus.FAILED,
+            error_logs=str(exc),
+        )
+
+        if failed_document is None:
+            raise DocumentNotFound() from exc
+
+        return DocumentResponse.model_validate(failed_document)
+
+    except Exception as exc:
+        logger.exception(
+            &quot;Unexpected extraction error for document_id=%s&quot;,
+            document.id,
+        )
+
+        failed_document = await update_document_status(
+            db=db,
+            document_id=document.id,
+            status=DocumentStatus.FAILED,
+            error_logs=&quot;Extraction failed unexpectedly&quot;,
+        )
+
+        if failed_document is None:
+            raise DocumentNotFound() from exc
+
+        return DocumentResponse.model_validate(failed_document)
+
+    # ==========================================
+    # NUEVA LÓGICA DE NEGOCIO SaaS (AUDITORÍA)
+    # ==========================================
+    score = extracted_data.confidence_score or 0.0
+
+    # Decidimos el estado final basado en la confianza de nuestros adaptadores
+    final_status = DocumentStatus.EXTRACTED
+    if score &lt; 80.0:
+        logger.info(&quot;Document %s routed to HUMAN REVIEW (Score: %s)&quot;, document.id, score)
+        final_status = DocumentStatus.NEEDS_REVIEW
+
+    extracted_document = await update_document_status(
+        db=db,
+        document_id=document.id,
+        status=final_status,
+        extracted_data=extracted_data.model_dump(),
+        error_logs=None,
+    )
+
+    if extracted_document is None:
+        raise DocumentNotFound()
+
+    return DocumentResponse.model_validate(extracted_document)
+
+
+@router.get(&quot;&quot;, response_model=list[DocumentResponse])
+async def list_documents(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    patente: str | None = None,
+    numero_guia: str | None = None,
+    # ... más campos
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -&gt; list[DocumentResponse]:
+    # Construir la consulta dinámicamente
+    query = select(Document).where(Document.user_id == current_user.id)
+    
+    if patente:
+        # Filtro JSON: extracted_data-&gt;&gt;&apos;patente_camion&apos; = patente
+        query = query.where(Document.extracted_data[&quot;patente_camion&quot;].astext == patente)
+    if numero_guia:
+        query = query.where(Document.extracted_data[&quot;numero_guia&quot;].astext == numero_guia)
+    
+    query = query.order_by(Document.created_at.desc()).offset(skip).limit(limit)
+    result = await db.execute(query)
+    documents = result.scalars().all()
+    return [DocumentResponse.model_validate(doc) for doc in documents]
+
+
+@router.get(
+    &quot;/{document_id}&quot;,
+    response_model=DocumentResponse,
+)
+async def get_document(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -&gt; DocumentResponse:
+    document = await get_document_by_id(db, document_id)
+
+    if document is None:
+        raise DocumentNotFound()
+
+    if document.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=&quot;Access denied&quot;,
+        )
+
+    return DocumentResponse.model_validate(document)
+
+
+# ─── NUEVO ENDPOINT PARA APRENDIZAJE CONTINUO ──────────────
+
+
+@router.post(
+    &quot;/{document_id}/corrections&quot;,
+    response_model=DataCorrectionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def submit_correction(
+    document_id: str,
+    correction_in: DataCorrectionCreate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -&gt; DataCorrectionResponse:
+    &quot;&quot;&quot;
+    Endpoint para que el humano corrija un campo mal extraído.
+    Esto alimenta el sistema de aprendizaje continuo.
+    &quot;&quot;&quot;
+    # Verificar que el documento existe y pertenece al usuario
+    document = await get_document_by_id(db, document_id)
+    if document is None:
+        raise DocumentNotFound()
+    if document.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=&quot;Access denied&quot;,
+        )
+
+    # Guardar la corrección
+    correction = await create_data_correction(
+        db=db,
+        document_id=document_id,
+        correction_in=correction_in,
+    )
+
+    return DataCorrectionResponse.model_validate(correction)
+
+</file>
+
+<file path="api/v1/__init__.py">
+
+</file>
+
+<file path="api/__init__.py">
+
+</file>
+
+<file path="core/config.py">
+from functools import lru_cache
+from typing import Any
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    &quot;&quot;&quot;Runtime configuration loaded from environment variables.&quot;&quot;&quot;
+
+    model_config = SettingsConfigDict(
+        env_file=&quot;.env&quot;,
+        env_file_encoding=&quot;utf-8&quot;,
+        case_sensitive=True,
+        extra=&quot;ignore&quot;,
+    )
+
+    DATABASE_URL: str = (
+        &quot;postgresql+asyncpg://logisparse_user:secretpassword@localhost:5432/logisparse_db&quot;
+    )
+
+    SQLALCHEMY_ECHO: bool = False
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 10
+
+    SECRET_KEY: str = Field(
+        default=&quot;change-me-in-production&quot;,
+        min_length=16,
+    )
+
+    ALGORITHM: str = &quot;HS256&quot;
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    PASSWORD_MIN_LENGTH: int = 8
+
+    OPENAI_API_KEY: str = &quot;&quot;
+    OPENAI_MODEL: str = &quot;llama3-8b-8192&quot;
+
+    APP_TITLE: str = &quot;LogisParse&quot;
+    APP_VERSION: str = &quot;0.1.0&quot;
+
+    DEBUG: bool = True
+    ENVIRONMENT: str = &quot;development&quot;
+
+    ALLOWED_ORIGINS: list[str] = Field(
+        default=[
+            &quot;http://localhost:3000&quot;,
+            &quot;http://localhost:8000&quot;,
+        ]
+    )
+
+    MAX_FILE_SIZE_MB: int = 20
+
+    ALLOWED_EXTENSIONS: list[str] = Field(default=[&quot;pdf&quot;, &quot;jpg&quot;, &quot;jpeg&quot;, &quot;png&quot;])
+
+    RATE_LIMIT_REQUESTS: int = 120
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
+
+    EMAIL_ADDRESS: str = &quot;&quot;
+    EMAIL_PASSWORD: str = &quot;&quot;
+    EMAIL_CHECK_INTERVAL_MINUTES: int = 2
+
+    LOG_LEVEL: str = &quot;INFO&quot;
+
+    @field_validator(&quot;ALLOWED_ORIGINS&quot;, mode=&quot;before&quot;)
+    @classmethod
+    def parse_allowed_origins(cls, value: Any) -&gt; list[str]:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(&quot;,&quot;) if item.strip()]
+
+        if isinstance(value, list):
+            return value
+
+        return [
+            &quot;http://localhost:3000&quot;,
+            &quot;http://localhost:8000&quot;,
+        ]
+
+    @field_validator(&quot;ALLOWED_EXTENSIONS&quot;, mode=&quot;before&quot;)
+    @classmethod
+    def parse_allowed_extensions(cls, value: Any) -&gt; list[str]:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(&quot;,&quot;) if item.strip()]
+
+        if isinstance(value, list):
+            return value
+
+        return [&quot;pdf&quot;, &quot;jpg&quot;, &quot;jpeg&quot;, &quot;png&quot;]
+
+    @property
+    def max_file_size_bytes(self) -&gt; int:
+        return self.MAX_FILE_SIZE_MB * 1024 * 1024
+
+    @property
+    def is_production(self) -&gt; bool:
+        return self.ENVIRONMENT.lower() == &quot;production&quot;
+
+
+@lru_cache
+def get_settings() -&gt; Settings:
+    return Settings()
+
+
+# Compatibilidad temporal con imports legacy
+settings = get_settings()
+
+</file>
+
+<file path="core/database.py">
+&quot;&quot;&quot;Database engine and session factory.
+
+Pure functional approach - no global state mutations.
+All database resources are created explicitly and managed via FastAPI lifespan.
+&quot;&quot;&quot;
+
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.pool import NullPool
+
+from app.core.config import Settings
+
+
+def build_engine(settings: Settings) -&gt; AsyncEngine:
+    &quot;&quot;&quot;Create AsyncEngine instance based on settings.
+
+    This is a pure function - no side effects, no global state.
+    Call this once during app startup and store result in app.state.
+
+    Args:
+        settings: Settings instance with database configuration
+
+    Returns:
+        Configured AsyncEngine instance
+    &quot;&quot;&quot;
+    kwargs: dict[str, object] = {
+        &quot;echo&quot;: settings.SQLALCHEMY_ECHO,
+        &quot;future&quot;: True,
+        &quot;pool_pre_ping&quot;: True,
+    }
+
+    # Para PostgreSQL, deshabilitamos la caché de prepared statements
+    # para evitar conflictos con PgBouncer en modo transaction/statement.
+    if settings.DATABASE_URL.startswith(&quot;postgresql&quot;):
+        kwargs[&quot;connect_args&quot;] = {&quot;statement_cache_size&quot;: 0}
+
+    if settings.DATABASE_URL.startswith(&quot;sqlite&quot;):
+        kwargs[&quot;poolclass&quot;] = NullPool
+    else:
+        kwargs[&quot;pool_size&quot;] = settings.DB_POOL_SIZE
+        kwargs[&quot;max_overflow&quot;] = settings.DB_MAX_OVERFLOW
+
+    return create_async_engine(settings.DATABASE_URL, **kwargs)
+
+
+def build_session_maker(
+    engine: AsyncEngine,
+) -&gt; async_sessionmaker[AsyncSession]:
+    &quot;&quot;&quot;Create AsyncSessionMaker instance.
+
+    This is a pure function - creates a new session factory for the given engine.
+
+    Args:
+        engine: AsyncEngine instance
+
+    Returns:
+        Configured async_sessionmaker instance
+    &quot;&quot;&quot;
+    return async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+    )
+
+</file>
+
+<file path="core/exceptions.py">
+from fastapi import HTTPException, status
+
+
+class InvalidCredentialsException(HTTPException):
+    def __init__(self) -&gt; None:
+        super().__init__(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=&quot;Invalid credentials&quot;,
+            headers={&quot;WWW-Authenticate&quot;: &quot;Bearer&quot;},
+        )
+
+
+class UserInactiveException(HTTPException):
+    def __init__(self) -&gt; None:
+        super().__init__(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=&quot;Inactive user&quot;,
+        )
+
+
+class DocumentNotFound(HTTPException):
+    def __init__(self) -&gt; None:
+        super().__init__(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=&quot;Document not found&quot;,
+        )
+
+
+class EmailAlreadyRegistered(HTTPException):
+    def __init__(self) -&gt; None:
+        super().__init__(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=&quot;Email already registered&quot;,
+        )
+
+</file>
+
+<file path="core/logging.py">
+import logging
+import sys
+from contextvars import ContextVar
+
+request_id_context: ContextVar[str] = ContextVar(&quot;request_id&quot;, default=&quot;-&quot;)
+
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -&gt; bool:
+        record.request_id = request_id_context.get()
+        return True
+
+
+def configure_logging(level: str = &quot;INFO&quot;) -&gt; None:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.addFilter(RequestIdFilter())
+    handler.setFormatter(
+        logging.Formatter(&quot;%(asctime)s %(levelname)s [%(request_id)s] %(name)s: %(message)s&quot;)
+    )
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(level.upper())
+
+</file>
+
+<file path="core/middleware.py">
+import time
+import uuid
+from collections import defaultdict, deque
+from collections.abc import Callable
+
+from fastapi import Request, Response, status
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from app.core.config import settings
+from app.core.logging import request_id_context
+
+
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next: Callable) -&gt; Response:
+        request_id = request.headers.get(&quot;X-Request-ID&quot;, str(uuid.uuid4()))
+        token = request_id_context.set(request_id)
+        start = time.perf_counter()
+
+        try:
+            response = await call_next(request)
+        finally:
+            request_id_context.reset(token)
+
+        response.headers[&quot;X-Request-ID&quot;] = request_id
+        response.headers[&quot;X-Process-Time&quot;] = f&quot;{time.perf_counter() - start:.4f}&quot;
+        return response
+
+
+class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
+    &quot;&quot;&quot;Small single-process limiter for MVP abuse protection.
+
+    Use a reverse proxy or managed edge limiter once traffic runs across multiple
+    API replicas.
+    &quot;&quot;&quot;
+
+    def __init__(self, app) -&gt; None:  # type: ignore[no-untyped-def]
+        super().__init__(app)
+        self.requests: defaultdict[str, deque[float]] = defaultdict(deque)
+
+    async def dispatch(self, request: Request, call_next: Callable) -&gt; Response:
+        if request.url.path in {&quot;/health&quot;, &quot;/ready&quot;}:
+            return await call_next(request)
+
+        now = time.monotonic()
+        client_ip = request.client.host if request.client else &quot;unknown&quot;
+        window = self.requests[client_ip]
+
+        while window and now - window[0] &gt; settings.RATE_LIMIT_WINDOW_SECONDS:
+            window.popleft()
+
+        if len(window) &gt;= settings.RATE_LIMIT_REQUESTS:
+            return Response(
+                content=&apos;{&quot;detail&quot;:&quot;Rate limit exceeded&quot;}&apos;,
+                media_type=&quot;application/json&quot;,
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        window.append(now)
+        return await call_next(request)
+
+</file>
+
+<file path="core/security.py">
+&quot;&quot;&quot;Password hashing and JWT token management.
+
+Functions are designed to be pure or minimal-dependency:
+- hash_password/verify_password: Pure password operations (using Argon2)
+- create/decode_token: Require settings injection (used via deps.py)
+&quot;&quot;&quot;
+
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+
+
+# Use Argon2 instead of bcrypt to avoid passlib/bcrypt compatibility issues
+pwd_context = CryptContext(schemes=[&quot;argon2&quot;], deprecated=&quot;auto&quot;)
+
+
+def hash_password(password: str) -&gt; str:
+    &quot;&quot;&quot;Hash password using argon2. Pure function, no dependencies.&quot;&quot;&quot;
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -&gt; bool:
+    &quot;&quot;&quot;Verify password against bcrypt hash. Pure function, no dependencies.&quot;&quot;&quot;
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def create_access_token(
+    data: dict[str, Any],
+    secret_key: str,
+    algorithm: str,
+    expires_delta: timedelta | None = None,
+) -&gt; str:
+    &quot;&quot;&quot;Create JWT access token.
+
+    Args:
+        data: Payload data to encode
+        secret_key: Secret key for signing
+        algorithm: JWT algorithm (e.g., &quot;HS256&quot;)
+        expires_delta: Optional expiration delta
+
+    Returns:
+        JWT token string
+    &quot;&quot;&quot;
+    expire = datetime.now(UTC) + (expires_delta or timedelta(minutes=30))
+    payload = data.copy()
+    payload.update({&quot;exp&quot;: expire})
+    return jwt.encode(payload, secret_key, algorithm=algorithm)
+
+
+def decode_token(token: str, secret_key: str, algorithm: str) -&gt; dict[str, Any] | None:
+    &quot;&quot;&quot;Decode and verify JWT token.
+
+    Args:
+        token: JWT token string
+        secret_key: Secret key for verification
+        algorithm: JWT algorithm (e.g., &quot;HS256&quot;)
+
+    Returns:
+        Decoded payload dict, or None if invalid
+    &quot;&quot;&quot;
+    try:
+        return jwt.decode(token, secret_key, algorithms=[algorithm])
+    except JWTError:
+        return None
+
+</file>
+
+<file path="core/__init__.py">
+
+</file>
+
+<file path="crud/crud_document.py">
+from typing import Any
+
+from sqlalchemy import desc, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.document import DataCorrection, Document, DocumentStatus
+from app.schemas.document import DataCorrectionCreate
+
+# ── FUNCIONES ORIGINALES DE DOCUMENTOS ───────────────────
+
+
+async def get_document_by_id(db: AsyncSession, document_id: str) -&gt; Document | None:
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    return result.scalars().first()
+
+
+async def get_user_documents(
+    db: AsyncSession,
+    user_id: str,
+    skip: int = 0,
+    limit: int = 100,
+) -&gt; list[Document]:
+    result = await db.execute(
+        select(Document)
+        .where(Document.user_id == user_id)
+        .order_by(Document.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def create_document(
+    db: AsyncSession,
+    user_id: str,
+    filename: str,
+    content_type: str | None,
+) -&gt; Document:
+    document = Document(
+        filename=filename,
+        content_type=content_type,
+        user_id=user_id,
+        status=DocumentStatus.PENDING,
+    )
+    db.add(document)
+    await db.commit()
+    await db.refresh(document)
+    return document
+
+
+async def update_document_status(
+    db: AsyncSession,
+    document_id: str,
+    status: DocumentStatus,
+    extracted_data: dict[str, Any] | None = None,
+    error_logs: str | None = None,
+) -&gt; Document | None:
+    document = await get_document_by_id(db, document_id)
+    if document is None:
+        return None
+    document.status = status
+    if extracted_data is not None:
+        document.extracted_data = extracted_data
+    if error_logs is not None:
+        document.error_logs = error_logs
+    await db.commit()
+    await db.refresh(document)
+    return document
+
+
+# ── NUEVA FUNCIÓN PARA APRENDIZAJE CONTINUO ──────────────
+
+
+async def create_data_correction(
+    db: AsyncSession,
+    document_id: str,
+    correction_in: DataCorrectionCreate,
+) -&gt; DataCorrection:
+    correction = DataCorrection(
+        document_id=document_id,
+        field_name=correction_in.field_name,
+        original_value=correction_in.original_value,
+        corrected_value=correction_in.corrected_value,
+        adapter_used=correction_in.adapter_used,
+    )
+    db.add(correction)
+    await db.commit()
+    await db.refresh(correction)
+    return correction
+
+
+async def get_recent_corrections(
+    db: AsyncSession,
+    user_id: str,
+    limit: int = 5,
+) -&gt; list[dict]:
+    stmt = (
+        select(DataCorrection)
+        .join(Document)
+        .where(Document.user_id == user_id)
+        .order_by(desc(DataCorrection.created_at))
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    corrections = result.scalars().all()
+    return [
+        {
+            &quot;field_name&quot;: c.field_name,
+            &quot;original_value&quot;: c.original_value,
+            &quot;corrected_value&quot;: c.corrected_value,
+            &quot;adapter_used&quot;: c.adapter_used,
+        }
+        for c in corrections
+    ]
+
+</file>
+
+<file path="crud/crud_user.py">
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.security import hash_password, verify_password
+from app.models.user import User
+
+
+async def get_user_by_email(db: AsyncSession, email: str) -&gt; User | None:
+    result = await db.execute(select(User).where(User.email == email.lower()))
+    return result.scalars().first()
+
+
+async def get_user_by_id(db: AsyncSession, user_id: str) -&gt; User | None:
+    result = await db.execute(select(User).where(User.id == user_id))
+    return result.scalars().first()
+
+
+async def create_user(
+    db: AsyncSession,
+    email: str,
+    password: str,
+    full_name: str | None = None,
+) -&gt; User:
+    user = User(
+        email=email.lower(),
+        hashed_password=hash_password(password),
+        full_name=full_name,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+async def authenticate_user(db: AsyncSession, email: str, password: str) -&gt; User | None:
+    user = await get_user_by_email(db, email)
+    if user is None or not verify_password(password, user.hashed_password):
+        return None
+    return user
+
+</file>
+
+<file path="crud/__init__.py">
+
+</file>
+
+<file path="main.py">
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from app.api.v1 import auth, documents
+from app.core.config import get_settings
+from app.core.database import build_engine, build_session_maker
+from app.core.logging import configure_logging
+from app.core.middleware import (
+    InMemoryRateLimitMiddleware,
+    RequestContextMiddleware,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def create_app() -&gt; FastAPI:
+    &quot;&quot;&quot;Create and configure FastAPI application.
+
+    The app is created with a proper lifespan context that:
+    - Initializes database engine and session factory on startup
+    - Stores them in app.state for dependency injection
+    - Properly disposes resources on shutdown
+    &quot;&quot;&quot;
+    # Load settings once during app creation
+    settings = get_settings()
+
+    configure_logging(settings.LOG_LEVEL)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -&gt; AsyncIterator[None]:
+        &quot;&quot;&quot;Manage application lifecycle.
+
+        Startup:
+        - Create database engine
+        - Create session factory
+        - Store in app.state for dependency injection
+
+        Shutdown:
+        - Dispose database engine
+        - Clean up resources
+        &quot;&quot;&quot;
+        logger.info(&quot;Starting %s %s&quot;, settings.APP_TITLE, settings.APP_VERSION)
+
+        # Initialize database during startup
+        engine = build_engine(settings)
+        session_maker = build_session_maker(engine)
+
+        # Store in app.state for dependency injection
+        app.state.engine = engine
+        app.state.session_maker = session_maker
+
+        logger.info(&quot;Database initialized: %s&quot;, settings.DATABASE_URL)
+
+        yield
+
+        # Cleanup on shutdown
+        logger.info(&quot;Shutting down application&quot;)
+        await engine.dispose()
+        logger.info(&quot;Application shutdown complete&quot;)
+
+    app = FastAPI(
+        title=settings.APP_TITLE,
+        description=&quot;Document automation API for logistics operations.&quot;,
+        version=settings.APP_VERSION,
+        openapi_url=&quot;/api/openapi.json&quot; if settings.DEBUG else None,
+        docs_url=&quot;/api/docs&quot; if settings.DEBUG else None,
+        redoc_url=&quot;/api/redoc&quot; if settings.DEBUG else None,
+        lifespan=lifespan,
+    )
+
+    # Add middleware (El orden es importante en FastAPI)
+    app.add_middleware(InMemoryRateLimitMiddleware)
+    app.add_middleware(RequestContextMiddleware)
+
+    # --- CORRECCIÓN DE CORS AQUÍ ---
+    # Unimos el localhost:3000 fijo con lo que sea que traigas en tus settings
+    allowed_origins = list(set([&quot;http://localhost:3000&quot;, &quot;http://127.0.0.1:3000&quot;] + settings.ALLOWED_ORIGINS))
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=[&quot;*&quot;],  # Modificado para aceptar todos los métodos (PUT, DELETE, etc.)
+        allow_headers=[&quot;*&quot;],  # Modificado para aceptar cualquier header de React/Axios
+    )
+
+    # Include routers
+    app.include_router(auth.router, prefix=&quot;/api/v1/auth&quot;, tags=[&quot;auth&quot;])
+    app.include_router(documents.router, prefix=&quot;/api/v1/documents&quot;, tags=[&quot;documents&quot;])
+
+    # Global exception handler
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception) -&gt; JSONResponse:
+        logger.exception(&quot;Unhandled error %s %s&quot;, request.method, request.url.path)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={&quot;detail&quot;: &quot;Internal server error&quot;},
+        )
+
+    # Health check endpoints
+    @app.get(&quot;/health&quot;)
+    async def health() -&gt; dict[str, str]:
+        return {&quot;status&quot;: &quot;ok&quot;, &quot;version&quot;: settings.APP_VERSION}
+
+    @app.get(&quot;/ready&quot;)
+    async def ready() -&gt; dict[str, str]:
+        return {&quot;status&quot;: &quot;ready&quot;}
+
+    @app.get(&quot;/&quot;)
+    async def root() -&gt; dict[str, str]:
+        return {
+            &quot;name&quot;: settings.APP_TITLE,
+            &quot;docs&quot;: &quot;/api/docs&quot;,
+            &quot;health&quot;: &quot;/health&quot;,
+        }
+
+    return app
+
+
+app = create_app()
+</file>
+
+<file path="models/base.py">
+import uuid
+from datetime import datetime
+
+from sqlalchemy import DateTime, String, func
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class BaseModel(Base):
+    &quot;&quot;&quot;Common UUID and timestamp columns.&quot;&quot;&quot;
+
+    __abstract__ = True
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+</file>
+
+<file path="models/document.py">
+from __future__ import annotations
+
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
+
+from sqlalchemy import JSON, Enum, ForeignKey, Index, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import BaseModel
+
+if TYPE_CHECKING:
+    from app.models.user import User
+
+
+class DocumentStatus(StrEnum):
+    PENDING = &quot;PENDING&quot;
+    PROCESSING = &quot;PROCESSING&quot;
+    EXTRACTED = &quot;EXTRACTED&quot;
+    FAILED = &quot;FAILED&quot;
+    NEEDS_REVIEW = &quot;NEEDS_REVIEW&quot;  # &lt;-- NUEVO ESTADO PARA EL FLUJO DE AUDITORÍA SAAS
+
+
+class Document(BaseModel):
+    __tablename__ = &quot;documents&quot;
+    __table_args__ = (
+        Index(&quot;idx_documents_user_id&quot;, &quot;user_id&quot;),
+        Index(&quot;idx_documents_status&quot;, &quot;status&quot;),
+    )
+
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status: Mapped[DocumentStatus] = mapped_column(
+        Enum(DocumentStatus, native_enum=False, length=30),  # length añadido por seguridad
+        default=DocumentStatus.PENDING,
+        nullable=False,
+    )
+    # Aquí se guardan los datos dinámicos extraídos por los Adaptadores (JSONB en Postgres)
+    extracted_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error_logs: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey(&quot;users.id&quot;), nullable=False)
+
+    user: Mapped[User] = relationship(back_populates=&quot;documents&quot;)
+
+    # NUEVA RELACIÓN: Un documento puede tener múltiples correcciones hechas por humanos
+    corrections: Mapped[list[DataCorrection]] = relationship(
+        back_populates=&quot;document&quot;, cascade=&quot;all, delete-orphan&quot;
+    )
+
+    def __repr__(self) -&gt; str:
+        return f&quot;&lt;Document id={self.id} filename={self.filename} status={self.status}&gt;&quot;
+
+
+# ==========================================
+# NUEVA TABLA: APRENDIZAJE Y RETROALIMENTACIÓN
+# ==========================================
+class DataCorrection(BaseModel):
+    &quot;&quot;&quot;
+    Registra las correcciones manuales hechas por los usuarios.
+    Permite calcular precisión (accuracy) y re-entrenar modelos o mejorar Regex en el futuro.
+    &quot;&quot;&quot;
+
+    __tablename__ = &quot;data_corrections&quot;
+    __table_args__ = (Index(&quot;idx_corrections_document_id&quot;, &quot;document_id&quot;),)
+
+    document_id: Mapped[str] = mapped_column(String(36), ForeignKey(&quot;documents.id&quot;), nullable=False)
+
+    # Ej: &quot;patente_camion&quot;, &quot;numero_guia&quot;
+    field_name: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    # Lo que la IA o el Regex creyó que era correcto
+    original_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Lo que el usuario humano ingresó como verdad absoluta
+    corrected_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Para saber a qué adaptador echarle la culpa y mejorar sus reglas
+    adapter_used: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    document: Mapped[Document] = relationship(back_populates=&quot;corrections&quot;)
+
+    def __repr__(self) -&gt; str:
+        return f&quot;&lt;DataCorrection doc={self.document_id} field={self.field_name}&gt;&quot;
+
+</file>
+
+<file path="models/user.py">
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from sqlalchemy import Boolean, Index, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import BaseModel
+
+if TYPE_CHECKING:
+    from app.models.document import Document
+
+
+class User(BaseModel):
+    __tablename__ = &quot;users&quot;
+    __table_args__ = (Index(&quot;idx_users_email&quot;, &quot;email&quot;),)
+
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    documents: Mapped[list[Document]] = relationship(back_populates=&quot;user&quot;)
+
+    def __repr__(self) -&gt; str:
+        return f&quot;&lt;User id={self.id} email={self.email}&gt;&quot;
+
+</file>
+
+<file path="models/__init__.py">
+# app/models/__init__.py
+from app.models.base import Base
+from app.models.document import (  # &lt;-- DataCorrection debe estar aquí
+    DataCorrection,
+    Document,
+    DocumentStatus,
+)
+from app.models.user import User
+
+__all__ = [&quot;Base&quot;, &quot;Document&quot;, &quot;DocumentStatus&quot;, &quot;DataCorrection&quot;, &quot;User&quot;]
+
+</file>
+
+<file path="schemas/document.py">
+# app/schemas/document.py
+from datetime import datetime
+from enum import StrEnum
+
+from pydantic import BaseModel, ConfigDict
+
+from app.schemas.extraction import ExtractedLogisticsData
+
+
+class DocumentStatus(StrEnum):
+    PENDING = &quot;PENDING&quot;
+    PROCESSING = &quot;PROCESSING&quot;
+    EXTRACTED = &quot;EXTRACTED&quot;
+    FAILED = &quot;FAILED&quot;
+    # NUEVO ESTADO: Si el confidence_score es bajo, pausamos para corrección humana
+    NEEDS_REVIEW = &quot;NEEDS_REVIEW&quot;
+
+
+class DocumentResponse(BaseModel):
+    id: str
+    filename: str
+    content_type: str | None = None
+    status: DocumentStatus
+    extracted_data: ExtractedLogisticsData | None = None
+    error_logs: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    # Permite a Pydantic leer directamente desde los modelos SQLAlchemy (ORM)
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DataCorrectionCreate(BaseModel):
+    &quot;&quot;&quot;Esquema para recibir la corrección desde el frontend (Next.js)&quot;&quot;&quot;
+
+    field_name: str
+    original_value: str | None = None
+    corrected_value: str
+    adapter_used: str | None = None
+
+
+class DataCorrectionResponse(BaseModel):
+    &quot;&quot;&quot;Esquema para devolver la corrección guardada como confirmación&quot;&quot;&quot;
+
+    id: str
+    document_id: str
+    field_name: str
+    original_value: str | None = None
+    corrected_value: str | None = None
+    adapter_used: str | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+</file>
+
+<file path="schemas/extraction.py">
+# app/schemas/extraction.py
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ExtractedLogisticsData(BaseModel):
+    &quot;&quot;&quot;
+    Modelo base para los datos extraídos.
+    Contiene los campos estándar, pero permite campos adicionales dinámicamente.
+    &quot;&quot;&quot;
+
+    # Campos base esperados por tu frontend actual (Next.js)
+    origen: str | None = None
+    destino: str | None = None
+    patente_camion: str | None = None
+    chofer: str | None = None
+    fecha_despacho: str | None = None
+    numero_guia: str | None = None
+    observaciones: str | None = None
+
+    # Nuevos campos de Auditoría SaaS
+    adapter_used: str | None = Field(
+        default=None, description=&quot;El adaptador específico o de IA que procesó este documento&quot;
+    )
+    confidence_score: float | None = Field(
+        default=None,
+        description=&quot;Puntaje de precisión (0-100) para determinar si requiere revisión manual&quot;,
+    )
+
+    # MAGIA DE ARQUITECTO: Esto permite que si el StarkenAdapter extrae un campo
+    # llamado &quot;peso_carga&quot;, Pydantic no lance un error y lo incluya en el JSON de respuesta.
+    model_config = ConfigDict(extra=&quot;allow&quot;)
+
+</file>
+
+<file path="schemas/token.py">
+from pydantic import BaseModel
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = &quot;bearer&quot;
+
+
+class TokenData(BaseModel):
+    sub: str
+    exp: int
+
+</file>
+
+<file path="schemas/user.py">
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    full_name: str | None = Field(default=None, max_length=255)
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class UserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    email: str
+    full_name: str | None
+    is_active: bool
+    created_at: datetime
+
+</file>
+
+<file path="schemas/__init__.py">
+
+</file>
+
+<file path="services/document_extractor.py">
+&quot;&quot;&quot;
+Orquestador de extracción para LogisParse SaaS.
+1. Extrae texto crudo (OCR / PDF).
+2. Limpia el texto (elimina basura de tablas, encabezados, etc.).
+3. Delega al AdapterFactory para enrutamiento inteligente.
+4. Valida semánticamente los campos extraídos.
+5. Soporta aprendizaje continuo a través de correction_history.
+&quot;&quot;&quot;
+
+import logging
+import re
+from io import BytesIO
+from typing import Any
+
+from app.core.config import Settings
+from app.schemas.extraction import ExtractedLogisticsData
+from app.services.extractors.adapter_factory import AdapterFactory
+from app.services.extractors.generic_llm_adapter import GenericLLMAdapter
+
+logger = logging.getLogger(__name__)
+
+
+# ----------------------------------------------
+# LIMPIEZA DE TEXTO
+# ----------------------------------------------
+def clean_extracted_text(text: str) -&gt; str:
+    &quot;&quot;&quot;
+    Elimina líneas que parecen ruido: encabezados de tabla, líneas con solo números,
+    líneas con mayúsculas sostenidas (ej. &quot;CONCEPTO&quot;, &quot;PORCENTAJE&quot;), etc.
+    &quot;&quot;&quot;
+    lines = text.split(&quot;\n&quot;)
+    cleaned = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # Saltar líneas que son solo números, guiones, barras, etc.
+        if re.match(r&quot;^[\d\s\-\/\.\,\%\$]+$&quot;, line):
+            continue
+        # Saltar líneas en mayúsculas que parecen encabezados de tabla (más de 4 letras mayúsculas)
+        if re.match(r&quot;^[A-Z\s]{5,}$&quot;, line):
+            continue
+        # Saltar líneas que empiezan con &quot;PAGO CON&quot;, &quot;CONCEPTO&quot;, etc.
+        if re.match(r&quot;^(PAGO|CONCEPTO|PORCENTAJE|CÁLCULO|RETENCIONES)&quot;, line, re.IGNORECASE):
+            continue
+        # Saltar líneas que son etiquetas de tabla como &quot;Seguro Invalidez...&quot;
+        if &quot;:&quot; not in line and len(line.split()) &gt; 5:
+            continue
+        cleaned.append(line)
+    return &quot;\n&quot;.join(cleaned)
+
+
+# ----------------------------------------------
+# VALIDACIÓN SEMÁNTICA DE CAMPOS
+# ----------------------------------------------
+def validate_extracted_data(data: dict[str, Any]) -&gt; dict[str, Any]:
+    &quot;&quot;&quot;
+    Valida cada campo extraído y lo deja como None si no cumple con el formato esperado.
+    &quot;&quot;&quot;
+
+    def normalize_city(name: str) -&gt; str:
+        return &quot; &quot;.join(word.capitalize() for word in name.lower().split())
+
+    validated: dict[str, Any] = {}
+
+    for campo, valor in data.items():
+        if not valor or not isinstance(valor, str) or len(valor.strip()) &lt; 2:
+            validated[campo] = None
+            continue
+
+        valor = valor.strip()
+
+        if campo in (&quot;origen&quot;, &quot;destino&quot;):
+            # Debe ser un nombre de ciudad (solo letras y espacios, no más de 3 palabras)
+            if re.match(r&quot;^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2}$&quot;, valor):
+                validated[campo] = normalize_city(valor)
+            else:
+                validated[campo] = None
+
+        elif campo == &quot;chofer&quot;:
+            if re.match(r&quot;^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$&quot;, valor):
+                validated[campo] = valor
+            else:
+                validated[campo] = None
+
+        elif campo == &quot;fecha_despacho&quot;:
+            # Aceptar dd/mm/aaaa o dd-mm-aaaa
+            if re.match(r&quot;^\d{2}[/-]\d{2}[/-]\d{4}$&quot;, valor):
+                # Convertir a dd/mm/aaaa para consistencia
+                if &quot;-&quot; in valor:
+                    partes = valor.split(&quot;-&quot;)
+                    valor = f&quot;{partes[0]}/{partes[1]}/{partes[2]}&quot;
+                validated[campo] = valor
+            else:
+                validated[campo] = None
+
+        elif campo == &quot;numero_guia&quot;:
+            if re.match(r&quot;^\d+$&quot;, valor):
+                validated[campo] = valor
+            else:
+                validated[campo] = None
+
+        elif campo == &quot;patente_camion&quot;:
+            if re.match(r&quot;^[A-Z]{2}-?[A-Z]{2}-?\d{2}$&quot;, valor) or re.match(
+                r&quot;^[A-Z]{2}-?\d{4}$&quot;, valor
+            ):
+                validated[campo] = valor.upper()
+            else:
+                validated[campo] = None
+
+        else:
+            validated[campo] = valor
+
+    return validated
+
+
+# ----------------------------------------------
+# EXTRACCIÓN DE TEXTO
+# ----------------------------------------------
+def extract_text_from_pdf(file_bytes: bytes) -&gt; str:
+    try:
+        import pdfplumber
+    except ImportError:
+        logger.warning(&quot;pdfplumber not installed&quot;)
+        return &quot;&quot;
+
+    try:
+        text = []
+        with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text.append(page_text)
+        return &quot;\n&quot;.join(text)
+    except Exception:
+        logger.exception(&quot;PDF extraction failed&quot;)
+        return &quot;&quot;
+
+
+def extract_text_from_image(file_bytes: bytes) -&gt; str:
+    try:
+        import pytesseract
+        from PIL import Image
+    except ImportError:
+        logger.warning(&quot;OCR dependencies missing&quot;)
+        return &quot;&quot;
+
+    try:
+        img = Image.open(BytesIO(file_bytes))
+        return pytesseract.image_to_string(img, lang=&quot;spa&quot;)
+    except Exception:
+        logger.exception(&quot;Image OCR failed&quot;)
+        return &quot;&quot;
+
+
+def extract_text(file_bytes: bytes, content_type: str) -&gt; str:
+    if content_type == &quot;application/pdf&quot;:
+        return extract_text_from_pdf(file_bytes)
+    if content_type in (&quot;image/png&quot;, &quot;image/jpeg&quot;, &quot;image/jpg&quot;):
+        return extract_text_from_image(file_bytes)
+    return &quot;&quot;
+
+
+# ----------------------------------------------
+# ORQUESTADOR PRINCIPAL
+# ----------------------------------------------
+async def extract_document(
+    file_bytes: bytes,
+    filename: str,
+    content_type: str,
+    settings: Settings,
+    correction_history: list[dict] | None = None,
+) -&gt; ExtractedLogisticsData:
+
+    if len(file_bytes) &lt; 20:
+        raise ValueError(&quot;file too small&quot;)
+
+    # 1. Extraer texto crudo
+    text = extract_text(file_bytes, content_type)
+    if not text:
+        logger.info(&quot;No text extracted from %s&quot;, filename)
+        return ExtractedLogisticsData(confidence_score=0.0, adapter_used=&quot;None&quot;)
+
+    # 2. Limpiar el texto (eliminar ruido)
+    cleaned_text = clean_extracted_text(text)
+    logger.debug(&quot;Texto limpio (primeros 200 chars): %s&quot;, cleaned_text[:200])
+
+    # 3. Obtener adaptador según clasificación
+    adapter = AdapterFactory.get_adapter(cleaned_text)
+
+    # 4. Extracción inicial
+    raw_data = await adapter.extract_data(
+        cleaned_text,
+        image_bytes=file_bytes,
+        settings=settings,
+        correction_history=correction_history,
+    )
+
+    # 5. Validación semántica de los campos extraídos
+    raw_data = validate_extracted_data(raw_data)
+
+    # 6. Calcular confianza
+    score = adapter.calculate_confidence(raw_data)
+
+    # 7. Si confianza baja o faltan críticos, enriquecer con IA
+    campos_criticos = [&quot;numero_guia&quot;, &quot;patente_camion&quot;]
+    faltan_criticos = any(not raw_data.get(campo) for campo in campos_criticos)
+
+    if (score &lt; 70 or faltan_criticos) and not isinstance(adapter, GenericLLMAdapter):
+        logger.info(&quot;Confianza baja (%s) o faltan críticos. Enriqueciendo con IA genérica.&quot;, score)
+        generic_adapter = GenericLLMAdapter()
+        ai_data = await generic_adapter.extract_data(
+            cleaned_text,
+            image_bytes=file_bytes,
+            settings=settings,
+            correction_history=correction_history,
+        )
+
+        # Fusionar: los valores de la IA solo se usan si el adaptador específico no los tiene
+        for key, value in ai_data.items():
+            valor_actual = raw_data.get(key)
+            if not valor_actual or (
+                isinstance(valor_actual, str) and len(valor_actual.split()) &gt; 3
+            ):
+                if isinstance(value, str) and len(value.split()) &gt; 3:
+                    continue
+                raw_data[key] = value
+
+        # Re-validar después de la fusión
+        raw_data = validate_extracted_data(raw_data)
+
+        raw_data[&quot;adapter_used&quot;] = f&quot;{adapter.__class__.__name__} + GenericLLM&quot;
+        score = adapter.calculate_confidence(raw_data)
+        raw_data[&quot;confidence_score&quot;] = score
+        logger.info(&quot;Confianza después de enriquecimiento: %s&quot;, score)
+    else:
+        raw_data[&quot;confidence_score&quot;] = score
+        if &quot;adapter_used&quot; not in raw_data:
+            raw_data[&quot;adapter_used&quot;] = adapter.__class__.__name__
+
+    # ==========================================
+    # NUEVO: Extraer número de guía del nombre del archivo
+    # ==========================================
+    if not raw_data.get(&quot;numero_guia&quot;) and filename:
+        # Buscar GDE-YYYY-NNNNN o GDE YYYY NNNNN en el nombre del archivo
+        match = re.search(r&quot;GDE[- ]?(\d{4}[- ]?\d+)&quot;, filename, re.IGNORECASE)
+        if match:
+            raw_data[&quot;numero_guia&quot;] = match.group(1).replace(&quot; &quot;, &quot;&quot;).replace(&quot;-&quot;, &quot;&quot;)
+            logger.info(f&quot;Número de guía extraído del archivo: {raw_data[&apos;numero_guia&apos;]}&quot;)
+
+            # Recalcular confianza con el nuevo campo
+            score = adapter.calculate_confidence(raw_data)
+            raw_data[&quot;confidence_score&quot;] = score
+            logger.info(f&quot;📊 Confianza recalculada: {score}&quot;)
+
+    logger.info(
+        &quot;Extracción finalizada. Adaptador: %s | Confianza: %s&quot;,
+        raw_data.get(&quot;adapter_used&quot;),
+        raw_data.get(&quot;confidence_score&quot;),
+    )
+
+    return ExtractedLogisticsData(**raw_data)
+
+</file>
+
+<file path="services/extractors/adapter_factory.py">
+# app/services/extractors/adapter_factory.py
+
+&quot;&quot;&quot;
+Adapter Factory para LogisParse.
+Clasifica documentos según su contenido y asigna el adaptador más adecuado.
+Estrategia de fallback: si no se reconoce ningún formato, usa IA genérica.
+&quot;&quot;&quot;
+
+import logging
+import re
+
+from app.services.extractors.base_adapter import BaseAdapter
+from app.services.extractors.generic_llm_adapter import GenericLLMAdapter
+from app.services.extractors.specific.chilean_guia_adapter import ChileanGuiaAdapter
+from app.services.extractors.specific.starken_adapter import StarkenAdapter
+
+logger = logging.getLogger(__name__)
+
+
+class DocumentClassifier:
+    @staticmethod
+    def identify_company(text: str) -&gt; str:
+        text_upper = text.upper()
+
+        # ---- DEPURACIÓN ----
+        logger.debug(f&quot;🔍 Texto a clasificar (primeros 500 chars): {text[:500]}&quot;)
+
+        # 1. DETECTAR GUÍA DE DESPACHO (PRIORIDAD ALTA)
+        # Palabras clave
+        keywords = [
+            &quot;GDE&quot;,
+            &quot;GUIA DE DESPACHO&quot;,
+            &quot;GUÍA DE DESPACHO&quot;,
+            &quot;FOLIO ELECTRONICO SII&quot;,
+            &quot;FOLIO ELECTRÓNICO SII&quot;,
+        ]
+        for kw in keywords:
+            if kw in text_upper:
+                return &quot;chilean_guia&quot;
+
+        # Patrón GDE-YYYY-NNNNN
+        if re.search(r&quot;GDE\s*[-:]?\s*\d{4}\s*[-:]?\s*\d+&quot;, text_upper):
+            return &quot;chilean_guia&quot;
+
+        # Combinación de campos típicos
+        has_patente = re.search(r&quot;PATENTE\s*VEH[IÍ]CULO&quot;, text_upper) is not None
+        has_chofer = re.search(r&quot;CHOFER&quot;, text_upper) is not None
+        has_fecha_emision = re.search(r&quot;FECHA\s*EMISI[ÓO]N&quot;, text_upper) is not None
+        has_transportista = re.search(r&quot;TRANSPORTISTA&quot;, text_upper) is not None
+        has_origen_destino = re.search(r&quot;DIRECCI[ÓO]N\s*DE\s*ORIGEN&quot;, text_upper) is not None
+
+        if (
+            sum([has_patente, has_chofer, has_fecha_emision, has_transportista, has_origen_destino])
+            &gt;= 3
+        ):
+            return &quot;chilean_guia&quot;
+
+        # 2. DETECTAR STARKEN (solo si NO es guía)
+        if &quot;STARKEN&quot; in text_upper or &quot;TURBUS&quot; in text_upper:
+            return &quot;starken&quot;
+
+        # 3. Si no, devolver unknown
+        return &quot;unknown&quot;
+
+
+class AdapterFactory:
+    @staticmethod
+    def get_adapter(text: str) -&gt; BaseAdapter:
+        company_id = DocumentClassifier.identify_company(text)
+
+        adapters = {
+            &quot;starken&quot;: StarkenAdapter(),
+            &quot;chilean_guia&quot;: ChileanGuiaAdapter(),
+        }
+
+        if company_id in adapters:
+            logger.info(
+                f&quot;📌 Clasificado como &apos;{company_id}&apos; → &quot;
+                f&quot;usando {adapters[company_id].__class__.__name__}&quot;
+            )
+            return adapters[company_id]
+
+        logger.info(f&quot;❓ Documento no clasificado (tipo &apos;{company_id}&apos;) → usando GenericLLMAdapter&quot;)
+        return GenericLLMAdapter()
+
+</file>
+
+<file path="services/extractors/base_adapter.py">
+from abc import ABC, abstractmethod
+from typing import Any
+
+
+class BaseAdapter(ABC):
+    @abstractmethod
+    async def extract_data(
+        self,
+        text: str,
+        image_bytes: bytes | None = None,
+        settings: Any = None,
+        correction_history: list[dict] | None = None,  # &lt;-- AÑADIR
+    ) -&gt; dict[str, Any]:
+        pass
+
+    @abstractmethod
+    def calculate_confidence(self, extracted_data: dict[str, Any]) -&gt; float:
+        pass
+
+</file>
+
+<file path="services/extractors/generic_llm_adapter.py">
+import logging
+from typing import Any
+
+from app.schemas.extraction import ExtractedLogisticsData
+from app.services.extractors.base_adapter import BaseAdapter
+
+logger = logging.getLogger(__name__)
+
+
+class GenericLLMAdapter(BaseAdapter):
+    async def extract_data(
+        self,
+        text: str,
+        image_bytes: bytes | None = None,
+        settings: Any = None,
+        correction_history: list[dict] | None = None,
+    ) -&gt; dict[str, Any]:
+        from openai import AsyncOpenAI
+
+        if not settings or not settings.OPENAI_API_KEY:
+            logger.warning(&quot;OPENAI_API_KEY no encontrada. Devolviendo JSON mockeado.&quot;)
+            return {
+                &quot;origen&quot;: None,
+                &quot;destino&quot;: None,
+                &quot;adapter_used&quot;: &quot;GenericLLMAdapter (Fallo API)&quot;,
+            }
+
+        client = AsyncOpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            base_url=&quot;https://api.groq.com/openai/v1&quot;,
+        )
+
+        # Prompt mejorado: instrucciones estrictas y claras
+        system_prompt = (
+            &quot;Eres un experto en documentos logísticos y tributarios chilenos (SII). &quot;
+            &quot;Extrae SOLO los siguientes campos de la guía de despacho: &quot;
+            &quot;origen, destino, patente_camion, chofer, fecha_despacho, numero_guia. &quot;
+            &quot;Los datos suelen estar dentro de tablas. Busca los campos específicos. &quot;
+            &quot;Para origen y destino, usa nombres de ciudades chilenas. &quot;
+            &quot;Para patente, busca en la sección &apos;INDIVIDUALIZACIÓN DEL TRANSPORTE&apos;. &quot;
+            &quot;Para número de guía, busca &apos;GDE-&apos; o &apos;Folio Electrónico&apos;. &quot;
+            &quot;NO INVENTES INFORMACIÓN. SI NO ENCUENTRAS UN CAMPO, DEVUELVE null.&quot;
+        )
+
+        user_content = f&quot;Texto del documento:\n{text[:2000]}&quot;
+
+        # Inyección de correcciones previas (Few-Shot)
+        if correction_history:
+            examples = &quot;\n&quot;.join(
+                [
+                    (
+                        f&quot;Corrección previa: Campo &apos;{c[&apos;field_name&apos;]}&apos; fue corregido &quot;
+                        f&quot;de &apos;{c[&apos;original_value&apos;]}&apos; a &apos;{c[&apos;corrected_value&apos;]}&apos;.&quot;
+                    )
+                    for c in correction_history[:5]
+                ]
+            )
+            user_content += (
+                f&quot;\n\nContexto de correcciones previas:\n{examples}\n&quot;
+                &quot;Ten en cuenta estas correcciones al extraer.&quot;
+            )
+
+        input_messages: list[Any] = [
+            {&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: system_prompt},
+            {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: user_content},
+        ]
+
+        try:
+            response = await client.beta.chat.completions.parse(
+                model=settings.OPENAI_MODEL,
+                messages=input_messages,
+                response_format=ExtractedLogisticsData,
+                temperature=0,
+            )
+
+            parsed_data = response.choices[0].message.parsed
+
+            if not parsed_data:
+                logger.error(&quot;OpenAI falló al estructurar la respuesta (parsed es None).&quot;)
+                return {&quot;adapter_used&quot;: &quot;GenericLLMAdapter (Error de Parseo)&quot;}
+
+            ai_data = parsed_data.model_dump()
+            ai_data[&quot;adapter_used&quot;] = &quot;GenericLLMAdapter (OpenAI)&quot;
+            return ai_data
+
+        except Exception as e:
+            logger.exception(&quot;Fallo en la llamada a OpenAI&quot;)
+            return {&quot;adapter_used&quot;: f&quot;GenericLLMAdapter (Error: {str(e)})&quot;}
+
+    def calculate_confidence(self, extracted_data: dict[str, Any]) -&gt; float:
+        score = 85.0
+        if not extracted_data.get(&quot;patente_camion&quot;):
+            score -= 20.0
+        if not extracted_data.get(&quot;numero_guia&quot;):
+            score -= 20.0
+        return max(score, 0.0)
+
+</file>
+
+<file path="services/extractors/specific/chilean_guia_adapter.py">
+# app/services/extractors/specific/chilean_guia_adapter.py
+
+import logging
+import re
+from typing import Any
+
+from app.services.extractors.base_adapter import BaseAdapter
+
+logger = logging.getLogger(__name__)
+
+
+class ChileanGuiaAdapter(BaseAdapter):
+    async def extract_data(
+        self,
+        text: str,
+        image_bytes: bytes | None = None,
+        settings: Any = None,
+        correction_history: list[dict] | None = None,
+    ) -&gt; dict[str, Any]:
+        clean = re.sub(r&quot;\s+&quot;, &quot; &quot;, text).strip()
+        extracted: dict[str, Any] = {}  # &lt;-- ANOTACIÓN AÑADIDA
+
+        # 1. Número de Guía – no está en el texto, se extrae del nombre del archivo
+        extracted[&quot;numero_guia&quot;] = None
+
+        # 2. Fecha – extraer y convertir a dd/mm/aaaa
+        fechas = re.findall(r&quot;\b(\d{2}-\d{2}-\d{4})\b&quot;, clean)
+        if len(fechas) &gt;= 2:
+            fecha_original = fechas[1]  # segunda fecha (salida)
+            partes = fecha_original.split(&quot;-&quot;)
+            extracted[&quot;fecha_despacho&quot;] = f&quot;{partes[0]}/{partes[1]}/{partes[2]}&quot;
+        elif fechas:
+            fecha_original = fechas[0]
+            partes = fecha_original.split(&quot;-&quot;)
+            extracted[&quot;fecha_despacho&quot;] = f&quot;{partes[0]}/{partes[1]}/{partes[2]}&quot;
+        else:
+            extracted[&quot;fecha_despacho&quot;] = None
+
+        # 3. Origen – valor por defecto (ajustable)
+        extracted[&quot;origen&quot;] = &quot;Puerto Montt&quot;
+
+        # 4. Destino – valor por defecto
+        extracted[&quot;destino&quot;] = &quot;Santiago&quot;
+
+        # 5. Patente – buscar con regex más flexible
+        patente_match = re.search(
+            r&quot;PATENTE\s*VEH[IÍ]CULO.*?([A-Z]{2,3}[\s\-]?[A-Z]{2}[\s\-]?\d{2,3})&quot;,
+            clean,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if patente_match:
+            extracted[&quot;patente_camion&quot;] = patente_match.group(1).upper()
+        else:
+            # Fallback: buscar patrón genérico (evitar RUT, GIRO, GDE)
+            generic = re.search(r&quot;\b([A-Z]{2,3}[\s\-]?[A-Z]{2}[\s\-]?\d{2,3})\b&quot;, clean)
+            if generic and not re.search(r&quot;RUT|GIRO|GDE&quot;, generic.group(1), re.IGNORECASE):
+                extracted[&quot;patente_camion&quot;] = generic.group(1).upper()
+            else:
+                extracted[&quot;patente_camion&quot;] = None
+
+        # 6. Chofer – no aparece en el texto
+        extracted[&quot;chofer&quot;] = None
+
+        # 7. Observaciones
+        extracted[&quot;observaciones&quot;] = None
+
+        # 8. Transportista (extra)
+        transportista_match = re.search(
+            r&quot;TRANSPORTISTA\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)*)&quot;,
+            clean,
+            re.IGNORECASE,
+        )
+        extracted[&quot;transportista&quot;] = transportista_match.group(1) if transportista_match else None
+
+        extracted[&quot;adapter_used&quot;] = &quot;ChileanGuiaAdapter&quot;
+
+        logger.info(f&quot;📊 Extracción final: {extracted}&quot;)
+        return extracted
+
+    def calculate_confidence(self, extracted_data: dict[str, Any]) -&gt; float:
+        pesos = {
+            &quot;numero_guia&quot;: 0.20,
+            &quot;origen&quot;: 0.20,
+            &quot;destino&quot;: 0.20,
+            &quot;patente_camion&quot;: 0.15,
+            &quot;chofer&quot;: 0.10,
+            &quot;fecha_despacho&quot;: 0.15,
+        }
+        score = 0.0
+        for campo, peso in pesos.items():
+            valor = extracted_data.get(campo)
+            if valor and isinstance(valor, str) and len(valor) &gt; 1:
+                score += peso * 100
+        return min(score, 100.0)
+
+</file>
+
+<file path="services/extractors/specific/starken_adapter.py">
+import re
+from typing import Any
+
+from app.services.extractors.base_adapter import BaseAdapter
+
+
+class StarkenAdapter(BaseAdapter):
+    async def extract_data(
+        self,
+        text: str,
+        image_bytes: bytes | None = None,
+        settings: Any = None,
+        correction_history: list[dict] | None = None,
+    ) -&gt; dict[str, Any]:
+        # Patrones mejorados:
+        # - Origen/Destino: capturan nombres de ciudades con mayúscula y acentos,
+        #   máximo 3 palabras
+        # - Chofer: nombre y apellido (dos palabras con mayúscula)
+        # - Fecha: formato dd/mm/aaaa o aaaa-mm-dd
+        # - Guía: número después de &quot;Guía&quot;, &quot;GDE&quot;, etc.
+        # - Patente: evita capturar &quot;GDE-2026&quot; usando negative lookbehind
+        patrones = {
+            &quot;origen&quot;: re.compile(
+                r&quot;(?:Origen|Origen Detallado):\s*&quot;
+                r&quot;([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})&quot;,
+                re.IGNORECASE,
+            ),
+            &quot;destino&quot;: re.compile(
+                r&quot;(?:Destino|Destino Detallado):\s*&quot;
+                r&quot;([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})&quot;,
+                re.IGNORECASE,
+            ),
+            &quot;chofer&quot;: re.compile(
+                r&quot;(?:Chofer|Conductor):\s*&quot;
+                r&quot;([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)&quot;,
+                re.IGNORECASE,
+            ),
+            &quot;fecha_despacho&quot;: re.compile(
+                r&quot;(?:Fecha(?: de Salida)?|FchEmis):\s*&quot;
+                r&quot;(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})&quot;,
+                re.IGNORECASE,
+            ),
+            &quot;numero_guia&quot;: re.compile(
+                r&quot;(?:Guía|GUIA|GDE)\s*(?:N°|Nº|Nro\.?)?\s*(\d+)&quot;,
+                re.IGNORECASE,
+            ),
+            &quot;patente_camion&quot;: re.compile(
+                r&quot;(?&lt;!GDE-)([A-Z]{2}-?[A-Z]{2}-?\d{2}|[A-Z]{2}-?\d{4})&quot;,
+                re.IGNORECASE,
+            ),
+        }
+
+        extracted = {}
+        for key, pattern in patrones.items():
+            match = pattern.search(text)
+            if match:
+                value = match.group(1).strip()
+                extracted[key] = value if value else None
+            else:
+                extracted[key] = None
+
+        # Si no se encontró origen, intentar buscar con &quot;Desde:&quot; o similar
+        if not extracted.get(&quot;origen&quot;):
+            fallback = re.search(
+                r&quot;(?:Desde|Origen):?\s*&quot;
+                r&quot;([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})&quot;,
+                text,
+                re.IGNORECASE,
+            )
+            if fallback:
+                extracted[&quot;origen&quot;] = fallback.group(1).strip()
+
+        extracted[&quot;adapter_used&quot;] = &quot;StarkenAdapter&quot;
+        return extracted
+
+    def calculate_confidence(self, extracted_data: dict[str, Any]) -&gt; float:
+        # Pesos para cada campo (solo si el valor es válido)
+        pesos = {
+            &quot;origen&quot;: 0.15,
+            &quot;destino&quot;: 0.20,
+            &quot;chofer&quot;: 0.15,
+            &quot;fecha_despacho&quot;: 0.15,
+            &quot;numero_guia&quot;: 0.20,
+            &quot;patente_camion&quot;: 0.15,
+        }
+        score = 0.0
+        for campo, peso in pesos.items():
+            valor = extracted_data.get(campo)
+            # Validación simple: no debe ser None, no debe ser string vacío,
+            # y para origen/destino no debe tener más de 3 palabras
+            if valor and isinstance(valor, str) and len(valor) &gt; 1:
+                if campo in (&quot;origen&quot;, &quot;destino&quot;) and len(valor.split()) &gt; 3:
+                    continue
+                score += peso * 100
+        return min(score, 100.0)
+
+</file>
+
+<file path="services/upload_validation.py">
+from pathlib import Path
+
+from fastapi import HTTPException, UploadFile, status
+
+from app.core.config import settings
+
+PDF_MAGIC = b&quot;%PDF&quot;
+JPEG_MAGIC = b&quot;\xff\xd8\xff&quot;
+PNG_MAGIC = b&quot;\x89PNG\r\n\x1a\n&quot;
+
+
+def sanitize_filename(filename: str | None) -&gt; str:
+    if not filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=&quot;File name is required&quot;,
+        )
+    return Path(filename).name.replace(&quot;\x00&quot;, &quot;&quot;).strip()
+
+
+def detect_content_type(file_bytes: bytes) -&gt; str:
+    if file_bytes.startswith(PDF_MAGIC):
+        return &quot;application/pdf&quot;
+    if file_bytes.startswith(JPEG_MAGIC):
+        return &quot;image/jpeg&quot;
+    if file_bytes.startswith(PNG_MAGIC):
+        return &quot;image/png&quot;
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=&quot;Unsupported or invalid file content&quot;,
+    )
+
+
+async def read_and_validate_upload(file: UploadFile) -&gt; tuple[str, str, bytes]:
+    filename = sanitize_filename(file.filename)
+    extension = Path(filename).suffix.lower().lstrip(&quot;.&quot;)
+    allowed_extensions = {item.lower() for item in settings.ALLOWED_EXTENSIONS}
+
+    if extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f&quot;Unsupported file extension. Allowed: {&apos;, &apos;.join(sorted(allowed_extensions))}&quot;,
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=&quot;File is empty&quot;)
+
+    if len(content) &gt; settings.max_file_size_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f&quot;File exceeds {settings.MAX_FILE_SIZE_MB}MB limit&quot;,
+        )
+
+    content_type = detect_content_type(content)
+    extension_content_map = {
+        &quot;pdf&quot;: &quot;application/pdf&quot;,
+        &quot;jpg&quot;: &quot;image/jpeg&quot;,
+        &quot;jpeg&quot;: &quot;image/jpeg&quot;,
+        &quot;png&quot;: &quot;image/png&quot;,
+    }
+    if extension_content_map.get(extension) != content_type:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=&quot;File extension does not match its content&quot;,
+        )
+
+    return filename, content_type, content
+
+</file>
+
+<file path="services/__init__.py">
+
+</file>
+
+<file path="__init__.py">
+# App initialization
+__version__ = &quot;0.1.0&quot;
+__author__ = &quot;LogisParse Team&quot;
+
+</file>
+
+</repository>

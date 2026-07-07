@@ -3,6 +3,8 @@
 Upload → validate → extract → store.
 Evolucionado a SaaS: Evalúa confidence_score y redirige a revisión humana si es necesario.
 """
+from sqlalchemy import select
+from app.models.document import Document
 
 import logging
 from typing import Annotated
@@ -150,24 +152,29 @@ async def upload_document(
     return DocumentResponse.model_validate(extracted_document)
 
 
-@router.get(
-    "",
-    response_model=list[DocumentResponse],
-)
+@router.get("", response_model=list[DocumentResponse])
 async def list_documents(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
+    patente: str | None = None,
+    numero_guia: str | None = None,
+    # ... más campos
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[DocumentResponse]:
-    documents = await get_user_documents(
-        db=db,
-        user_id=current_user.id,
-        skip=skip,
-        limit=limit,
-    )
-
-    return [DocumentResponse.model_validate(document) for document in documents]
+    # Construir la consulta dinámicamente
+    query = select(Document).where(Document.user_id == current_user.id)
+    
+    if patente:
+        # Filtro JSON: extracted_data->>'patente_camion' = patente
+        query = query.where(Document.extracted_data["patente_camion"].astext == patente)
+    if numero_guia:
+        query = query.where(Document.extracted_data["numero_guia"].astext == numero_guia)
+    
+    query = query.order_by(Document.created_at.desc()).offset(skip).limit(limit)
+    result = await db.execute(query)
+    documents = result.scalars().all()
+    return [DocumentResponse.model_validate(doc) for doc in documents]
 
 
 @router.get(

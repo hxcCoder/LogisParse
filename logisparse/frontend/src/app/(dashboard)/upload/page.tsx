@@ -1,12 +1,11 @@
 // src/app/(dashboard)/upload/page.tsx
-
 'use client';
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { documentsApi } from '@/lib/api';
-import UploadDropzone from '@/components/upload/UploadDropZone';
+import UploadDropzone from '@/components/upload/UploadDropZone'; // Ojo con la Z mayúscula si tu archivo es así
 import PipelineVisual, { Step } from '@/components/upload/PipelineVisual';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import { FaArrowLeft } from 'react-icons/fa';
@@ -18,38 +17,22 @@ export default function UploadPage() {
   const { token } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [steps, setSteps] = useState<Step[]>([
+  
+  const initialSteps: Step[] = [
     { id: '1', label: 'Recibiendo documento', status: 'idle' },
     { id: '2', label: 'Extrayendo texto (OCR)', status: 'idle' },
     { id: '3', label: 'Analizando con IA', status: 'idle' },
     { id: '4', label: 'Validando datos', status: 'idle' },
-  ]);
+  ];
+  
+  const [steps, setSteps] = useState<Step[]>(initialSteps);
 
   const updateStep = (index: number, status: Step['status']) => {
     setSteps((prev) => prev.map((s, i) => (i === index ? { ...s, status } : s)));
   };
 
-  const simulatePipeline = async () => {
-    // Paso 1: Recibido
-    updateStep(0, 'processing');
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    updateStep(0, 'done');
-
-    // Paso 2: OCR
-    updateStep(1, 'processing');
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    updateStep(1, 'done');
-
-    // Paso 3: IA
-    updateStep(2, 'processing');
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    updateStep(2, 'done');
-
-    // Paso 4: Validación
-    updateStep(3, 'processing');
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    updateStep(3, 'done');
-  };
+  // Función auxiliar para pausas visuales
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const handleUpload = async () => {
     if (!file || !token) {
@@ -58,28 +41,45 @@ export default function UploadPage() {
     }
 
     setIsLoading(true);
-    // Reiniciar pipeline
-    setSteps((prev) => prev.map((s) => ({ ...s, status: 'idle' })));
+    setSteps(initialSteps);
 
     try {
-      // Iniciar animación del pipeline en paralelo
-      const pipelinePromise = simulatePipeline();
+      // 1. Recibiendo documento
+      updateStep(0, 'processing');
+      await sleep(600); // Pequeña pausa visual
+      
+      // Iniciamos la subida REAL al backend
+      const uploadPromise = documentsApi.upload(file, token);
+      updateStep(0, 'done');
 
-      // Subir el archivo
-      const response = await documentsApi.upload(file, token);
+      // 2. Extrayendo texto (OCR visual)
+      updateStep(1, 'processing');
+      await sleep(1000);
+      updateStep(1, 'done');
+
+      // 3. Analizando con IA (Esperamos a que el backend termine realmente aquí)
+      updateStep(2, 'processing');
+      const response = await uploadPromise; // Aquí se resuelve la petición real
+      updateStep(2, 'done');
+
+      // 4. Validando datos
+      updateStep(3, 'processing');
+      await sleep(600);
+      updateStep(3, 'done');
+
+      // Éxito real
       const documentId = response.data.id;
-
-      // Esperar a que termine la animación (por si acaso)
-      await pipelinePromise;
-
       toast.success('Documento procesado exitosamente 🎉');
+      
+      // Esperamos medio segundo para que el usuario vea todos los ticks verdes
+      await sleep(500); 
       router.push(`/documents/${documentId}`);
+
     } catch (error: any) {
-      // Marcar el último paso como error
+      console.error(error);
+      // Encontrar el paso que estaba en 'processing' y ponerlo en 'error'
       setSteps((prev) =>
-        prev.map((s, i) =>
-          i === prev.length - 1 ? { ...s, status: 'error' } : s
-        )
+        prev.map((s) => (s.status === 'processing' ? { ...s, status: 'error' } : s))
       );
       const message = error.response?.data?.detail || 'Error al subir el documento';
       toast.error(message);
@@ -92,10 +92,7 @@ export default function UploadPage() {
     <div className="max-w-4xl mx-auto">
       {/* Header */}
       <div className="flex items-center gap-4 mb-6">
-        <Link
-          href="/"
-          className="text-slate-500 hover:text-slate-700 transition-colors"
-        >
+        <Link href="/" className="text-slate-500 hover:text-slate-700 transition-colors">
           <FaArrowLeft size={20} />
         </Link>
         <div>
@@ -108,7 +105,6 @@ export default function UploadPage() {
 
       {/* Contenido */}
       <div className="grid md:grid-cols-3 gap-6">
-        {/* Dropzone */}
         <div className="md:col-span-2">
           <UploadDropzone
             onFileSelect={setFile}
@@ -116,7 +112,6 @@ export default function UploadPage() {
             isLoading={isLoading}
           />
 
-          {/* Botón de acción */}
           {file && (
             <div className="mt-4 flex justify-end">
               <button
@@ -137,7 +132,6 @@ export default function UploadPage() {
           )}
         </div>
 
-        {/* Pipeline Visual */}
         <div className="md:col-span-1">
           <PipelineVisual steps={steps} />
         </div>

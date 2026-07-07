@@ -21,7 +21,10 @@ export default function DashboardPage() {
   const limit = 10;
 
   const loadDocuments = async (currentSkip: number) => {
-    if (!token) return;
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     try {
       const response = await documentsApi.list(token, currentSkip, limit);
@@ -32,8 +35,13 @@ export default function DashboardPage() {
         setDocuments((prev) => [...prev, ...data]);
       }
       setHasMore(data.length === limit);
-    } catch (error) {
-      toast.error('Error al cargar los documentos');
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        toast.error('Sesión expirada. Inicia sesión nuevamente.');
+        // El interceptor ya maneja el logout automático
+      } else {
+        toast.error('Error al cargar los documentos');
+      }
       console.error(error);
     } finally {
       setIsLoading(false);
@@ -86,7 +94,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-xl shadow-sm p-12 text-center border border-slate-200">
           <div className="flex justify-center mb-4">
             <div className="bg-blue-50 p-4 rounded-full">
-              <FaFileAlt size={32} />
+              <FaFileAlt size={32} color="#2563eb" />
             </div>
           </div>
           <h2 className="text-xl font-semibold text-[#0F172A]">Aún no hay documentos</h2>

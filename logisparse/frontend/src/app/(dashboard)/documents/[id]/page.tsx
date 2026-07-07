@@ -1,5 +1,3 @@
-// src/app/(dashboard)/documents/[id]/page.tsx
-
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -14,14 +12,18 @@ import CorrectionForm from '@/components/corrections/CorrectionForm';
 import { FaArrowLeft, FaCheckCircle, FaExclamationTriangle, FaInfoCircle } from 'react-icons/fa';
 import toast from 'react-hot-toast';
 
-// Lista fija de todos los campos que queremos mostrar (incluso vacíos)
 const ALL_FIELDS: (keyof ExtractedLogisticsData)[] = [
+  'rut_emisor',
+  'rut_receptor',
+  'folio_sii',
+  'fecha_emision',
+  'monto_total',
+  'numero_guia',
+  'chofer',
+  'patente_camion',
   'origen',
   'destino',
-  'patente_camion',
-  'chofer',
   'fecha_despacho',
-  'numero_guia',
   'observaciones',
 ];
 
@@ -165,17 +167,28 @@ export default function DocumentDetailPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {ALL_FIELDS.map((key) => {
                   const value = data[key];
-                  const displayValue =
+                  const display =
                     value !== null && value !== undefined && value !== ''
                       ? String(value)
                       : '—';
+
+                  // Formateo especial para monto_total
+                  let formatted = display;
+                  if (key === 'monto_total' && display !== '—') {
+                    if (!display.startsWith('$')) {
+                      formatted = `$${display}`;
+                    }
+                  }
+
+                  const label = String(key).replace(/_/g, ' ');
+
                   return (
                     <div key={key} className="border-b border-slate-100 pb-2">
-                      <p className="text-xs text-slate-400 uppercase tracking-wider">
-                        {key.replace(/_/g, ' ')}
+                      <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
+                        {label}
                       </p>
                       <p className="text-sm font-medium text-[#0F172A] mt-0.5">
-                        {displayValue}
+                        {formatted}
                       </p>
                     </div>
                   );

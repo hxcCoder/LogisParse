@@ -47,7 +47,17 @@ class Settings(BaseSettings):
             "http://localhost:8000",
         ]
     )
+    # ── AWS Textract ──
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_REGION: str = "us-east-1"
+    AWS_TEXTRACT_BUCKET: str = ""  # Opcional, para PDFs grandes
 
+    # ── Carpetas de almacenamiento ──
+    UPLOAD_DIR: str = "uploads"
+    PROCESSED_DIR: str = "procesados"
+    EXCEL_OUTPUT_DIR: str = "procesados/excel"
+    
     MAX_FILE_SIZE_MB: int = 20
 
     ALLOWED_EXTENSIONS: list[str] = Field(default=["pdf", "jpg", "jpeg", "png"])

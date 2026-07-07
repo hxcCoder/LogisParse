@@ -5,11 +5,33 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ExtractedLogisticsData(BaseModel):
     """
-    Modelo base para los datos extraídos.
-    Contiene los campos estándar, pero permite campos adicionales dinámicamente.
+    Modelo base para los datos extraídos de documentos logísticos y tributarios chilenos.
+    Contiene campos estándar del SII más campos dinámicos.
     """
 
-    # Campos base esperados por tu frontend actual (Next.js)
+    # ── Campos de documento tributario chileno (SII) ──
+    rut_emisor: str | None = Field(
+        default=None,
+        description="RUT del emisor de la guía/factura (ej: 76.123.456-K)"
+    )
+    rut_receptor: str | None = Field(
+        default=None,
+        description="RUT del receptor (ej: 77.654.321-0)"
+    )
+    folio_sii: str | None = Field(
+        default=None,
+        description="Folio electrónico SII o número de guía"
+    )
+    fecha_emision: str | None = Field(
+        default=None,
+        description="Fecha de emisión del documento (formato dd/mm/aaaa)"
+    )
+    monto_total: str | None = Field(
+        default=None,
+        description="Monto total del documento en pesos chilenos"
+    )
+
+    # ── Campos logísticos ──
     origen: str | None = None
     destino: str | None = None
     patente_camion: str | None = None
@@ -18,15 +40,14 @@ class ExtractedLogisticsData(BaseModel):
     numero_guia: str | None = None
     observaciones: str | None = None
 
-    # Nuevos campos de Auditoría SaaS
+    # ── Metadatos de auditoría SaaS ──
     adapter_used: str | None = Field(
-        default=None, description="El adaptador específico o de IA que procesó este documento"
+        default=None,
+        description="El adaptador específico que procesó este documento"
     )
     confidence_score: float | None = Field(
         default=None,
-        description="Puntaje de precisión (0-100) para determinar si requiere revisión manual",
+        description="Puntaje de precisión (0-100)"
     )
 
-    # MAGIA DE ARQUITECTO: Esto permite que si el StarkenAdapter extrae un campo
-    # llamado "peso_carga", Pydantic no lance un error y lo incluya en el JSON de respuesta.
     model_config = ConfigDict(extra="allow")
